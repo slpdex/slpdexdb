@@ -23,12 +23,12 @@ use hex_literal::hex;
 
 
 fn main() -> Result<(), Box<std::error::Error>> {
-    tx_source::TxSource::new().request_txs(&[
+/*    tx_source::TxSource::new().request_txs(&[
         //tx_source::TxFilter::TokenId(hex!("28022a6d389f3ecd5ae96fb3bc63083e95d2f2ebbffdb544fe186125640eb117")),
         tx_source::TxFilter::Address(cashcontracts::Address::from_cash_addr("bitcoincash:qq5lzj2p3kznpdsm06ms7la9g6d8hezkkg4mgq9rdh".to_string()).unwrap()),
     ]);
     return Ok(());
-    //let fast = fast_utxo::FastUtxoSet::new("/Users/tobiasruck/workspace/bitcoin/slpdex-backend/data/QmXkBQJrMKkCKNbwv4m5xtnqwU9Sq7kucPigvZW8mWxcrv")?;
+  */  //let fast = fast_utxo::FastUtxoSet::new("/Users/tobiasruck/workspace/bitcoin/slpdex-backend/data/QmXkBQJrMKkCKNbwv4m5xtnqwU9Sq7kucPigvZW8mWxcrv")?;
     //for utxo in fast.take(10) {
     //    let utxo = utxo?;
     //    println!("{}", utxo);
@@ -36,7 +36,9 @@ fn main() -> Result<(), Box<std::error::Error>> {
     use diesel::prelude::*;
     use diesel::pg::PgConnection;
 
-    let db_conn = PgConnection::establish("postgres://tobiasruck@localhost/tobiasruck")?;
+    let connection_str = std::env::var("DATABASE_STR")?;
+
+    let db_conn = PgConnection::establish(&connection_str)?;
 
 
 
