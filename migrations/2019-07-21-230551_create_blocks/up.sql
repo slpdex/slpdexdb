@@ -1,0 +1,10 @@
+CREATE TABLE blocks (
+	hash BYTEA PRIMARY KEY,
+	height INTEGER NOT NULL,
+	version INTEGER NOT NULL,
+	prev_block BYTEA NOT NULL,
+	merkle_root BYTEA NOT NULL,
+	timestamp BIGINT NOT NULL,
+	bits BIGINT NOT NULL,
+	nonce BIGINT NOT NULL
+)
