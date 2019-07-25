@@ -48,9 +48,9 @@ impl Node {
 
     fn request_get_headers(db: &Db, connection: &mut TcpStream) -> io::Result<()> {
         let hash = match db.header_tip().unwrap() {  // TODO: handle error
-            Some(header) => header.hash(),
+            Some((header, _)) => header.hash(),
             None => {
-                db.add_header(&crate::block::GENESIS).unwrap();
+                db.add_headers(&[crate::block::GENESIS.clone()]).unwrap();
                 crate::block::GENESIS.hash()
             },
         };
@@ -82,10 +82,10 @@ impl Node {
                 let mut cur = io::Cursor::new(msg.payload());
                 let headers = HeadersMessage::from_stream(&mut cur)?;
                 if headers.headers.len() == 0 {return Ok(());}
-                for header in headers.headers {
+                for header in headers.headers.iter() {
                     println!("new header: {}", header);
-                    db.add_header(&header).unwrap();
                 }
+                db.add_headers(&headers.headers).unwrap();
                 Self::request_get_headers(db, connection)?;
             },
             _ => {},

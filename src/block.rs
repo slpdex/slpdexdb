@@ -3,6 +3,7 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::{io, io::{Write, Read}};
 use cashcontracts::{double_sha256, tx_hash_to_hex};
 
+#[derive(Clone, Debug)]
 pub struct BlockHeader {
     pub version: i32,
     pub prev_block: [u8; 32],
