@@ -2,6 +2,9 @@ pub struct SLPDEXConfig {
     pub fee_address: cashcontracts::Address,
     pub fee_divisor: u64,
     pub dust_limit: u64,
+    pub exch_lokad: &'static str,
+    pub exch_lokad_b64: String,
+    pub exch_version: i32,
 }
 
 impl Default for SLPDEXConfig {
@@ -12,6 +15,9 @@ impl Default for SLPDEXConfig {
             ).unwrap(),
             fee_divisor: 500,
             dust_limit: 0x222,
+            exch_lokad: "EXCH",
+            exch_lokad_b64: base64::encode("EXCH"),
+            exch_version: 2,
         }
     }
 }
