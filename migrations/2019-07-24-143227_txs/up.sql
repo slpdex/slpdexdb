@@ -1,7 +1,7 @@
 
 CREATE TABLE token (
     "id"                   SERIAL PRIMARY KEY,
-    "hash"                 BYTEA    NOT NULL,
+    "hash"                 BYTEA    NOT NULL UNIQUE,
     "decimals"             INT      NOT NULL,
     "timestamp"            BIGINT   NOT NULL,
     "version_type"         SMALLINT NOT NULL,
@@ -16,8 +16,8 @@ CREATE TABLE token (
 
 CREATE TABLE tx (
     "id"        BIGSERIAL PRIMARY KEY,
-    "hash"      BYTEA NOT NULL,
-    "height"    INT NOT NULL,
+    "hash"      BYTEA NOT NULL UNIQUE,
+    "height"    INT,
     "timestamp" BIGINT NOT NULL,
     "tx_type"   INT NOT NULL
 );
@@ -50,7 +50,7 @@ CREATE TABLE tx_input (
 
 CREATE TABLE trade_offer (
     "id"                     SERIAL PRIMARY KEY,
-    "tx"                     BIGINT REFERENCES tx (id) ON DELETE CASCADE,
+    "tx"                     BIGINT REFERENCES tx (id) ON DELETE CASCADE UNIQUE,
     "output_idx"             INT,
     "input_tx"               BYTEA NOT NULL,
     "input_idx"              INT NOT NULL,

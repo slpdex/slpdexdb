@@ -52,7 +52,7 @@ pub struct NewToken {
 pub struct Tx {
     pub id:        i64, // BIGSERIAL PRIMARY KEY,
     pub hash:      Vec<u8>, // BYTEA NOT NULL,
-    pub height:    i32, // INT NOT NULL,
+    pub height:    Option<i32>, // INT NOT NULL,
     pub timestamp: i64, // BIGINT NOT NULL,
     pub tx_type:   i32, // INT NOT NULL
 }
@@ -61,7 +61,7 @@ pub struct Tx {
 #[table_name="tx"]
 pub struct NewTx {
     pub hash:      Vec<u8>, // BYTEA NOT NULL,
-    pub height:    i32, // INT NOT NULL,
+    pub height:    Option<i32>, // INT NOT NULL,
     pub timestamp: i64, // BIGINT NOT NULL,
     pub tx_type:   i32, // INT NOT NULL
 }
@@ -103,7 +103,7 @@ pub struct TxInput {
 pub struct TradeOffer {
     pub id:                          i64, // SERIAL PRIMARY KEY,
     pub tx:                          i64, // BIGINT REFERENCES tx (id) ON DELETE CASCADE,
-    pub output_idx:                  i32, // INT NOT NULL,
+    pub output_idx:                  Option<i32>, // INT NOT NULL,
     pub input_tx:                    Vec<u8>, // BYTEA NOT NULL,
     pub input_idx:                   i32, // INT NOT NULL,
     pub approx_price_per_token:      f64, // DOUBLE PRECISION NOT NULL,
@@ -119,7 +119,7 @@ pub struct TradeOffer {
 #[table_name="trade_offer"]
 pub struct NewTradeOffer {
     pub tx:                     i64, // BIGINT REFERENCES tx (id) ON DELETE CASCADE,
-    pub output_idx:             i32, // INT NOT NULL,
+    pub output_idx:             Option<i32>, // INT NOT NULL,
     pub input_tx:               Vec<u8>, // BYTEA NOT NULL,
     pub input_idx:              i32, // INT NOT NULL,
     pub approx_price_per_token: f64, // DOUBLE PRECISION NOT NULL,
