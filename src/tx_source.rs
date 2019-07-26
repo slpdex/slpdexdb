@@ -1,11 +1,22 @@
 use cashcontracts::Address;
 use itertools::Itertools;
+use json::{JsonValue, object, array, object::Object};
+use crate::config::SLPDEXConfig;
+
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TxFilter {
     Address(Address),
     TokenId([u8; 32]),
+    MinBlockHeight(i32),
+    MinTxHash([u8; 32]),
     Exch,
+    SortBy(SortKey),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SortKey {
+    TxHash,
 }
 
 pub struct TxSource {
@@ -117,6 +128,102 @@ pub mod tx_result {
     }
 }
 
+impl TxFilter {
+    pub fn slp_conditions(filters: &[TxFilter],
+                          config: &SLPDEXConfig) -> Vec<(&'static str, JsonValue)> {
+        let is_exch = filters.iter().any(|filter| filter == &TxFilter::Exch);
+        let addresses = filters.iter()
+            .filter_map(|filter| {
+                match filter {
+                    TxFilter::Address(addr) if is_exch =>
+                        Some(base64::encode(addr.bytes())),
+                    TxFilter::Address(addr) if !is_exch =>
+                        Some(addr.with_prefix("simpleledger".to_string()).cash_addr().to_string()),
+                    _ => None,
+                }
+            })
+            .map(JsonValue::String)
+            .collect::<Vec<_>>();
+        filters.iter()
+            .flat_map(|filter| {
+                match filter {
+                    TxFilter::Exch => vec![
+                        ("in.b0", JsonValue::String(config.exch_lokad_b64.to_string())),
+                        ("in.b1", object!{"op" => 0x50 + config.exch_version}),
+                    ],
+                    TxFilter::TokenId(token_id) => vec![
+                        ("slp.detail.tokenIdHex", JsonValue::String(hex::encode(token_id)))
+                    ],
+                    _ => vec![],
+                }
+            })
+            .chain(
+                if addresses.len() > 0 {
+                    if is_exch {
+                        vec![
+                            ("in.b4", object!{"$in" => JsonValue::Array(addresses)}),
+                        ]
+                    } else {
+                        vec![
+                            ("out.e.a", object!{"$in" => JsonValue::Array(addresses.clone())}),
+                            ("in.e.a", object!{"$in" => JsonValue::Array(addresses)}),
+                        ]
+                    }
+                } else {
+                    vec![]
+                }
+            )
+            .chain(vec![("slp.valid", JsonValue::Boolean(true))])
+            .collect()
+    }
+
+    pub fn bch_conditions(filters: &[TxFilter]) -> Vec<(&'static str, JsonValue)> {
+        let base_address_list = filters.iter()
+            .filter_map(|filter| {
+                match filter {
+                    TxFilter::Address(addr) => {
+                        let prefix = "bitcoincash";
+                        let addr = addr.with_prefix(prefix.to_string());
+                        Some(addr.cash_addr()[prefix.len() + 1..].to_string())
+                    }
+                    _ => None,
+                }
+            })
+            .map(JsonValue::String)
+            .collect::<Vec<_>>();
+        vec![
+            ("out.e.a", object!{"$in" => JsonValue::Array(base_address_list)}),
+            ("out.b1", object!{"$ne" => JsonValue::String(base64::encode(b"SLP\0"))}),
+        ]
+    }
+
+    pub fn base_conditions(filters: &[TxFilter]) -> Vec<(&'static str, JsonValue)> {
+        filters.iter()
+            .filter_map(|filter| {
+                match filter {
+                    TxFilter::MinBlockHeight(height) => Some(("$or", object!{
+                        "blk"   => object!{"$exists" => false},
+                        "blk.i" => object!{"$gt" => *height},
+                    })),
+                    TxFilter::MinTxHash(tx_hash) => Some(
+                        ("tx.h", object!{"$gt" => cashcontracts::tx_hash_to_hex(tx_hash)})
+                    ),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    pub fn sort_by(filters: &[TxFilter]) -> JsonValue {
+        filters.iter().find_map(|filter| match filter {
+            TxFilter::SortBy(sort) => {
+
+            },
+            _ => None,
+        })
+    }
+}
+
 impl TxSource {
     pub fn new() -> Self {
         TxSource {
@@ -125,107 +232,49 @@ impl TxSource {
         }
     }
 
-    fn _request_slp_conditions(&self, filters: &[TxFilter]) -> String {
-        let is_exch = filters.iter().any(|f| f == &TxFilter::Exch);
-        let slp_address_list = filters.iter().filter_map(|f| {
-            match f {
-                TxFilter::Address(addr) => {
-                    if is_exch {
-                        Some(format!("\"{}\"", base64::encode(addr.bytes())))
-                    } else {
-                        Some(
-                            format!("\"{}\"",
-                                    addr.with_prefix("simpleledger".to_string()).cash_addr())
-                        )
-                    }
-                }
-                _ => None,
+    fn _query(&self, endpoint_url: &str, conditions: &[(&'static str, JsonValue)])
+            -> reqwest::Result<tx_result::TxResult> {
+        let mut condition_json = Object::new();
+        for (key, json) in conditions {
+            condition_json.insert(key, json.clone());
+        }
+        let query_json = json::stringify(object!{
+            "v" => 3,
+            "q" => object!{
+                "db" => array!["u", "c"],
+                "find" => JsonValue::Object(condition_json),
             }
-        }).join(",\n");
-        let conditions = filters.iter().filter_map(|f| {
-            match f {
-                TxFilter::Exch => Some(format!(
-                    r#""in.b0": "{}",
-                       "in.b1": {{"op": {}}}"#,
-                    base64::encode("EXCH"),
-                    0x52,
-                )),
-                TxFilter::TokenId(token_id) => Some(format!(
-                    "\"slp.detail.tokenIdHex\": \"{}\"",
-                    hex::encode(token_id),
-                )),
-                _ => None,
-            }
-        }).chain(
-            if slp_address_list.len() > 0 {
-                if is_exch {
-                    vec![format!("\"in.b4\": {{\"$in\": [{}]}}", slp_address_list)]
-                } else {
-                    vec![format!("\"out.e.a\": {{\"$in\": [{}]}}", slp_address_list),
-                         format!("\"in.e.a\":  {{\"$in\": [{}]}}", slp_address_list)]
-                }
-            } else {
-                vec![]
-            }
-        ).chain(vec!["\"slp.valid\": true".to_string()])
-            .join(",\n");
-        return conditions
-    }
-
-    fn _request_bch_conditions(&self, filters: &[TxFilter]) -> String {
-        let base_address_list = filters.iter().filter_map(|f| {
-            match f {
-                TxFilter::Address(addr) => {
-                    let prefix = "bitcoincash";
-                    let addr = addr.with_prefix(prefix.to_string());
-                    Some(
-                        format!("\"{}\"", &addr.cash_addr()[prefix.len() + 1..])
-                    )
-                }
-                _ => None,
-            }
-        }).join(",\n");
-        format!(r#""out.e.a": {{"$in": [{}]}},
-                  "out.b1": {{"$ne": "{}"}}"#,
-                base_address_list,
-                base64::encode(b"SLP\0"))
-    }
-
-    fn _query(&self, endpoint_url: &str, conditions: &str) -> reqwest::Result<tx_result::TxResult> {
-        let query_json = format!(r#"
-            {{
-              "v": 3,
-              "q": {{
-                "db": ["u", "c"],
-                "find": {{
-                  {}
-                }}
-              }}
-            }}
-        "#, conditions);
-        println!("query_json={}", query_json);
+        });
+        println!("{}", query_json);
         let query_b64 = base64::encode(&query_json);
         let text = reqwest::get(&format!("{}{}", endpoint_url, query_b64))?.text()?;
         println!("{}", text);
         Ok(serde_json::from_str(&text).unwrap())
     }
 
-    pub fn request_txs(&self, filters: &[TxFilter]) {
+    pub fn request_txs(&self, filters: &[TxFilter], config: &SLPDEXConfig)
+            -> reqwest::Result<Vec<tx_result::TxEntry>> {
         let slp_only = filters.iter().any(|f| match f {
             TxFilter::TokenId(_) | TxFilter::Exch => true,
             _ => false,
         });
+        let base_conditions = TxFilter::base_conditions(filters);
+        let mut entries = Vec::new();
         if !slp_only {
-            let bch_result = self._query(
+            let mut bch_conditions = TxFilter::bch_conditions(filters);
+            bch_conditions.append(&mut base_conditions.clone());
+            let mut bch_result = self._query(
                 &self.bitdb_endpoint_url,
-                &self._request_bch_conditions(filters),
-            ).unwrap();
-            dbg!(bch_result);
+                &bch_conditions,
+            )?;
+            entries.append(&mut bch_result.c);
+            entries.append(&mut bch_result.u);
         }
-        let slp_result = self._query(
-            &self.slpdb_endpoint_url,
-            &self._request_slp_conditions(filters),
-        ).unwrap();
-        dbg!(slp_result);
+        let mut slp_conditions = TxFilter::slp_conditions(filters, config);
+        slp_conditions.append(&mut base_conditions.clone());
+        let mut slp_result = self._query(&self.slpdb_endpoint_url, &slp_conditions)?;
+        entries.append(&mut slp_result.c);
+        entries.append(&mut slp_result.u);
+        Ok(entries)
     }
 }
