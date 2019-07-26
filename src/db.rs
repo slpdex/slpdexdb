@@ -2,9 +2,10 @@ use diesel::pg::PgConnection;
 use diesel::prelude::*;
 
 use crate::block::BlockHeader;
+use crate::tx_history::{TxHistory, TxType};
 use crate::{models, schema::*};
 
-use std::collections::{HashMap, BTreeSet};
+use std::collections::{HashMap, HashSet, BTreeSet};
 
 pub struct Db {
     connection: PgConnection,
@@ -65,5 +66,117 @@ impl Db {
         } else {
             Ok(Some(tips.remove(0)))
         }
+    }
+
+    pub fn add_tx_history(&self, tx_history: &TxHistory) -> QueryResult<()> {
+        self.connection.transaction(|| {
+            let token_hashes = tx_history.txs.iter()
+                .filter_map(|tx| {
+                    match tx.tx_type {
+                        TxType::SLP {token_hash, ..} => Some(token_hash.to_vec()),
+                        TxType::Default => None,
+                    }
+                })
+                .collect::<HashSet<_>>();
+            let new_txs = tx_history.txs.iter().map(|tx| {
+                models::NewTx {
+                    hash: tx.hash.to_vec(),
+                    height: tx.height,
+                    tx_type: tx.tx_type.id(),
+                    timestamp: tx.timestamp,
+                }
+            }).collect::<Vec<_>>();
+            let tokens: Vec<(Vec<u8>, i32)> = token::table
+                .select((token::hash, token::id))
+                .filter(token::hash.eq_any(token_hashes))
+                .load(&self.connection)?;
+            let token_ids = tokens.into_iter().collect::<HashMap<_, _>>();
+            let tx_ids = diesel::insert_into(tx::table)
+                .values(&new_txs)
+                .on_conflict(tx::hash)
+                .do_update().set((tx::height.eq(tx::height),
+                                  tx::tx_type.eq(tx::tx_type),
+                                  tx::timestamp.eq(tx::timestamp)))
+                .returning(tx::id)
+                .get_results::<i64>(&self.connection)?;
+            let new_slp_txs = tx_history.txs
+                .iter()
+                .zip(tx_ids.iter().cloned())
+                .filter_map(|(tx, id)| {
+                    match &tx.tx_type {
+                        TxType::SLP {token_hash, version, slp_type} => Some(models::SlpTx {
+                            tx: id,
+                            slp_type: slp_type.to_str().to_string(),
+                            token: *token_ids.get(token_hash.as_ref())?,
+                            version: *version,
+                        }),
+                        TxType::Default => None,
+                    }
+                }).collect::<Vec<_>>();
+            diesel::insert_into(slp_tx::table)
+                .values(&new_slp_txs)
+                .on_conflict_do_nothing()
+                .execute(&self.connection)?;
+            let new_outputs = tx_history.txs.iter()
+                .zip(tx_ids.iter().cloned())
+                .flat_map(|(tx, id)| {
+                    tx.outputs.iter().enumerate().map(move |(output_idx, output)|
+                        models::TxOutput {
+                            tx: id,
+                            idx: output_idx as i32,
+                            value_satoshis: output.value_satoshis as i64,
+                            value_token_base: output.value_token_base as i64,
+                            address: output.output.address()
+                                .map(|addr| addr.bytes().to_vec()),
+                            output_type: output.output.id(),
+                        })
+                })
+                .collect::<Vec<_>>();
+            diesel::insert_into(tx_output::table)
+                .values(&new_outputs)
+                .on_conflict_do_nothing()
+                .execute(&self.connection)?;
+            let new_inputs = tx_history.txs.iter()
+                .zip(tx_ids.iter().cloned())
+                .flat_map(|(tx, id)| {
+                    tx.inputs.iter().enumerate().map(move |(input_idx, input)| {
+                        models::TxInput {
+                            tx: id,
+                            idx: input_idx as i32,
+                            output_tx: input.output_tx.to_vec(),
+                            output_idx: input.output_idx,
+                            address: input.output.address()
+                                .map(|addr| addr.bytes().to_vec()),
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            diesel::insert_into(tx_input::table)
+                .values(&new_inputs)
+                .on_conflict_do_nothing()
+                .execute(&self.connection)?;
+            let new_trade_offers = tx_history.trade_offers
+                .iter()
+                .map(|(tx_idx, trade_offer)| {
+                    models::NewTradeOffer {
+                        tx: tx_ids[*tx_idx],
+                        output_idx: trade_offer.output_idx,
+                        input_idx: trade_offer.input_idx,
+                        input_tx: trade_offer.input_tx.to_vec(),
+                        approx_price_per_token: trade_offer.approx_price_per_token,
+                        price_per_token_numer: trade_offer.price_per_token_numer,
+                        price_per_token_denom: trade_offer.price_per_token_denom,
+                        script_price: trade_offer.script_price,
+                        sell_amount_token_base: trade_offer.sell_amount_token_base,
+                        receiving_address: trade_offer.receiving_address.bytes().to_vec(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            diesel::insert_into(trade_offer::table)
+                .values(&new_trade_offers)
+                .on_conflict_do_nothing()
+                .execute(&self.connection)?;
+            Ok(())
+        })
     }
 }
