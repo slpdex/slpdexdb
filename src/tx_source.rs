@@ -201,10 +201,10 @@ impl TxFilter {
         filters.iter()
             .filter_map(|filter| {
                 match filter {
-                    TxFilter::MinBlockHeight(height) => Some(("$or", object!{
-                        "blk"   => object!{"$exists" => false},
-                        "blk.i" => object!{"$gt" => *height},
-                    })),
+                    TxFilter::MinBlockHeight(height) => Some(("$or", array![
+                        object!{"blk"   => object!{"$exists" => false}},
+                        object!{"blk.i" => object!{"$gte" => *height}}
+                    ])),
                     TxFilter::MinTxHash(tx_hash) => Some(
                         ("tx.h", object!{"$gt" => cashcontracts::tx_hash_to_hex(tx_hash)})
                     ),
@@ -215,12 +215,17 @@ impl TxFilter {
     }
 
     pub fn sort_by(filters: &[TxFilter]) -> JsonValue {
-        filters.iter().find_map(|filter| match filter {
-            TxFilter::SortBy(sort) => {
-
-            },
-            _ => None,
-        })
+        filters.iter()
+            .find_map(|filter| match filter {
+                TxFilter::SortBy(sort) => {
+                    match sort {
+                        SortKey::TxHash => Some(object!{"tx.h" => 1}),
+                        _ => None,
+                    }
+                },
+                _ => None,
+            })
+            .unwrap_or(object!{})
     }
 }
 
@@ -232,17 +237,21 @@ impl TxSource {
         }
     }
 
-    fn _query(&self, endpoint_url: &str, conditions: &[(&'static str, JsonValue)])
+    fn _query(&self,
+              endpoint_url: &str,
+              conditions: Vec<(&'static str, JsonValue)>,
+              sort: JsonValue)
             -> reqwest::Result<tx_result::TxResult> {
         let mut condition_json = Object::new();
         for (key, json) in conditions {
-            condition_json.insert(key, json.clone());
+            condition_json.insert(key, json);
         }
         let query_json = json::stringify(object!{
             "v" => 3,
             "q" => object!{
                 "db" => array!["u", "c"],
                 "find" => JsonValue::Object(condition_json),
+                "sort" => sort,
             }
         });
         println!("{}", query_json);
@@ -259,20 +268,22 @@ impl TxSource {
             _ => false,
         });
         let base_conditions = TxFilter::base_conditions(filters);
+        let sort = TxFilter::sort_by(filters);
         let mut entries = Vec::new();
         if !slp_only {
             let mut bch_conditions = TxFilter::bch_conditions(filters);
             bch_conditions.append(&mut base_conditions.clone());
             let mut bch_result = self._query(
                 &self.bitdb_endpoint_url,
-                &bch_conditions,
+                bch_conditions,
+                sort.clone(),
             )?;
             entries.append(&mut bch_result.c);
             entries.append(&mut bch_result.u);
         }
         let mut slp_conditions = TxFilter::slp_conditions(filters, config);
         slp_conditions.append(&mut base_conditions.clone());
-        let mut slp_result = self._query(&self.slpdb_endpoint_url, &slp_conditions)?;
+        let mut slp_result = self._query(&self.slpdb_endpoint_url, slp_conditions, sort)?;
         entries.append(&mut slp_result.c);
         entries.append(&mut slp_result.u);
         Ok(entries)
