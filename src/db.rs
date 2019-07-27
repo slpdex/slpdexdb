@@ -3,6 +3,7 @@ use diesel::prelude::*;
 
 use crate::block::BlockHeader;
 use crate::tx_history::{TxHistory, TxType};
+use crate::update_history::{UpdateHistory, UpdateSubjectType};
 use crate::{models, schema::*};
 
 use std::collections::{HashMap, HashSet, BTreeSet};
@@ -178,5 +179,42 @@ impl Db {
                 .execute(&self.connection)?;
             Ok(())
         })
+    }
+
+    pub fn last_update(&self, subject_type: UpdateSubjectType)
+            -> QueryResult<Option<UpdateHistory>> {
+        let update: Option<models::UpdateHistory> = update_history::table
+            .filter(update_history::subject_type.eq(subject_type as i32))
+            .order((update_history::last_height.desc(),
+                    update_history::completed.desc(),
+                    update_history::last_hash_be.desc()))
+            .limit(1)
+            .first::<models::UpdateHistory>(&self.connection)
+            .optional()?;
+        Ok(update.map(|update| {
+            UpdateHistory {
+                last_height: update.last_height,
+                last_hash: update.last_hash,
+                subject_type,
+                completed: update.completed,
+            }
+        }))
+    }
+
+    pub fn add_update_history(&self, update_history: &UpdateHistory) -> QueryResult<()> {
+        diesel::insert_into(update_history::table)
+            .values(&models::NewUpdateHistory {
+                last_height: update_history.last_height,
+                last_hash: update_history.last_hash.clone(),
+                last_hash_be: update_history.last_hash.as_ref().map(|hash| {
+                    let mut hash = hash.clone();
+                    hash.reverse();
+                    hash
+                }),
+                subject_type: update_history.subject_type as i32,
+                completed: update_history.completed,
+            })
+            .execute(&self.connection)?;
+        Ok(())
     }
 }
