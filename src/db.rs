@@ -185,17 +185,16 @@ impl Db {
             -> QueryResult<Option<UpdateHistory>> {
         let update: Option<models::UpdateHistory> = update_history::table
             .filter(update_history::subject_type.eq(subject_type as i32))
-            .order((update_history::last_height.desc(),
-                    update_history::completed.desc(),
-                    update_history::last_hash_be.desc()))
+            .order((update_history::timestamp.desc()))
             .limit(1)
             .first::<models::UpdateHistory>(&self.connection)
             .optional()?;
         Ok(update.map(|update| {
             UpdateHistory {
                 last_height: update.last_height,
-                last_hash: update.last_hash,
+                last_tx_hash: update.last_tx_hash,
                 subject_type,
+                subject_hash: update.subject_hash,
                 completed: update.completed,
             }
         }))
@@ -205,13 +204,14 @@ impl Db {
         diesel::insert_into(update_history::table)
             .values(&models::NewUpdateHistory {
                 last_height: update_history.last_height,
-                last_hash: update_history.last_hash.clone(),
-                last_hash_be: update_history.last_hash.as_ref().map(|hash| {
+                last_tx_hash: update_history.last_tx_hash.clone(),
+                last_tx_hash_be: update_history.last_tx_hash.as_ref().map(|hash| {
                     let mut hash = hash.clone();
                     hash.reverse();
                     hash
                 }),
                 subject_type: update_history.subject_type as i32,
+                subject_hash: update_history.subject_hash.clone(),
                 completed: update_history.completed,
             })
             .execute(&self.connection)?;
