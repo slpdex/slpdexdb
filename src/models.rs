@@ -130,6 +130,27 @@ pub struct NewTradeOffer {
     pub receiving_address:      Vec<u8>, // BYTEA NOT NULL
 }
 
+#[derive(Queryable)]
+pub struct UpdateHistory {
+    pub id:            i64, // BIGSERIAL PRIMARY KEY,
+    pub last_height:   i32, // INT NOT NULL,
+    pub last_hash:     Option<Vec<u8>>, // BYTEA NOT NULL,
+    pub last_hash_be:  Option<Vec<u8>>, // BYTEA NOT NULL,
+    pub subject_type:  i32, // INT NOT NULL,
+    pub timestamp:     chrono::DateTime<chrono::Utc>, // TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    pub completed:     bool, // BOOL NOT NULL
+}
+
+#[derive(Insertable)]
+#[table_name="update_history"]
+pub struct NewUpdateHistory {
+    pub last_height:   i32, // INT NOT NULL,
+    pub last_hash:     Option<Vec<u8>>, // BYTEA NOT NULL,
+    pub last_hash_be:  Option<Vec<u8>>, // BYTEA NOT NULL,
+    pub subject_type:  i32, // INT NOT NULL,
+    pub completed:     bool, // BOOL NOT NULL
+}
+
 impl Block {
     pub fn from_block_header(header: &BlockHeader, height: i32) -> Block {
         Block {
