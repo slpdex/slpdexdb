@@ -2,6 +2,7 @@ use cashcontracts::Address;
 use itertools::Itertools;
 use json::{JsonValue, object, array, object::Object};
 use crate::config::SLPDEXConfig;
+use crate::endpoint::Endpoint;
 
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -20,8 +21,7 @@ pub enum SortKey {
 }
 
 pub struct TxSource {
-    bitdb_endpoint_url: String,
-    slpdb_endpoint_url: String,
+    endpoint: Endpoint
 }
 
 pub mod tx_result {
@@ -232,8 +232,7 @@ impl TxFilter {
 impl TxSource {
     pub fn new() -> Self {
         TxSource {
-            bitdb_endpoint_url: "https://bitdb.bch.sx/q/".to_string(),
-            slpdb_endpoint_url: "https://slpdb.fountainhead.cash/q/".to_string(),
+            endpoint: Endpoint::new(),
         }
     }
 
@@ -252,7 +251,7 @@ impl TxSource {
                 "db" => array!["u", "c"],
                 "find" => JsonValue::Object(condition_json),
                 "sort" => sort,
-            }
+            },
         });
         println!("{}", query_json);
         let query_b64 = base64::encode(&query_json);
@@ -274,7 +273,7 @@ impl TxSource {
             let mut bch_conditions = TxFilter::bch_conditions(filters);
             bch_conditions.append(&mut base_conditions.clone());
             let mut bch_result = self._query(
-                &self.bitdb_endpoint_url,
+                &self.endpoint.bitdb_endpoint_url,
                 bch_conditions,
                 sort.clone(),
             )?;
@@ -283,7 +282,11 @@ impl TxSource {
         }
         let mut slp_conditions = TxFilter::slp_conditions(filters, config);
         slp_conditions.append(&mut base_conditions.clone());
-        let mut slp_result = self._query(&self.slpdb_endpoint_url, slp_conditions, sort)?;
+        let mut slp_result = self._query(
+            &self.endpoint.slpdb_endpoint_url,
+            slp_conditions,
+            sort,
+        )?;
         entries.append(&mut slp_result.c);
         entries.append(&mut slp_result.u);
         Ok(entries)
