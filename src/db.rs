@@ -4,6 +4,7 @@ use diesel::prelude::*;
 use crate::block::BlockHeader;
 use crate::tx_history::{TxHistory, TxType};
 use crate::update_history::{UpdateHistory, UpdateSubjectType};
+use crate::token::Token;
 use crate::{models, schema::*};
 
 use std::collections::{HashMap, HashSet, BTreeSet};
@@ -214,6 +215,32 @@ impl Db {
                 subject_hash: update_history.subject_hash.clone(),
                 completed: update_history.completed,
             })
+            .execute(&self.connection)?;
+        Ok(())
+    }
+
+    pub fn add_tokens(&self, tokens: &[Token]) -> QueryResult<()> {
+        diesel::insert_into(token::table)
+            .values(&tokens.iter()
+                .map(|token| {
+                    models::NewToken {
+                        hash: token.hash.to_vec(),
+                        decimals: token.decimals,
+                        timestamp: token.timestamp,
+                        version_type: token.version_type,
+                        document_uri: token.document_uri.clone(),
+                        symbol: token.symbol.clone(),
+                        name: token.name.clone(),
+                        document_hash: token.document_hash.clone(),
+                        initial_supply: token.initial_supply,
+                        current_supply: token.current_supply,
+                        block_created_height: token.block_created_height,
+                    }
+                })
+                .collect::<Vec<_>>()
+            )
+            .on_conflict(token::hash)
+            .do_update().set(token::current_supply.eq(token::current_supply))
             .execute(&self.connection)?;
         Ok(())
     }
