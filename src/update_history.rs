@@ -1,5 +1,6 @@
 use crate::tx_source::{TxFilter, SortKey};
 use crate::tx_history::TxHistory;
+use crate::token::Token;
 use cashcontracts::{Address, AddressType};
 
 
@@ -39,6 +40,7 @@ impl UpdateHistory {
             },
         };
         match self.subject_type {
+            Token => {},
             Exch => {
                 filters.push(TxFilter::Exch);
             },
@@ -77,6 +79,16 @@ impl UpdateHistory {
             subject_type,
             subject_hash,
             completed: tx_history.txs.is_empty(),
+        }
+    }
+
+    pub fn from_tokens(tokens: &[Token], current_height: i32) -> Self {
+        UpdateHistory {
+            last_height: tokens.iter().map(|token| token.block_created_height).max().unwrap_or(current_height),
+            last_tx_hash: tokens.last().map(|token| token.hash.to_vec()),
+            subject_type: UpdateSubjectType::Token,
+            subject_hash: None,
+            completed: tokens.is_empty(),
         }
     }
 }
