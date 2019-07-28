@@ -1,5 +1,7 @@
 #[macro_use]
 extern crate diesel;
+#[macro_use]
+extern crate num_derive;
 
 mod block;
 mod message_error;
@@ -15,6 +17,10 @@ mod fast_utxo;
 mod tx_source;
 mod tx_history;
 mod config;
+mod update_history;
+mod endpoint;
+mod token_source;
+mod token;
 
 mod models;
 mod schema;
