@@ -165,8 +165,10 @@ impl TxFilter {
                         ]
                     } else {
                         vec![
-                            ("out.e.a", object!{"$in" => JsonValue::Array(addresses.clone())}),
-                            ("in.e.a", object!{"$in" => JsonValue::Array(addresses)}),
+                            ("$or", array![
+                                object!{"out.e.a" => object!{"$in" => JsonValue::Array(addresses.clone())}},
+                                object!{"in.e.a" => object!{"$in" => JsonValue::Array(addresses)}}
+                            ]),
                         ]
                     }
                 } else {
@@ -242,8 +244,16 @@ impl TxSource {
               sort: JsonValue)
             -> reqwest::Result<tx_result::TxResult> {
         let mut condition_json = Object::new();
+        let mut or_conditions_json = Vec::new();
         for (key, json) in conditions {
-            condition_json.insert(key, json);
+            if key == "$or" {
+                or_conditions_json.push(object!{"$or" => json});
+            } else {
+                condition_json.insert(key, json);
+            }
+        }
+        if or_conditions_json.len() > 0 {
+            condition_json.insert("$and", JsonValue::Array(or_conditions_json));
         }
         let query_json = json::stringify(object!{
             "v" => 3,
