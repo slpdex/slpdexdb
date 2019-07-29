@@ -2,6 +2,7 @@ use diesel::pg::PgConnection;
 use diesel::prelude::*;
 
 use crate::block::BlockHeader;
+use crate::tx_source::TxFilter;
 use crate::tx_history::{TxHistory, TxType};
 use crate::update_history::{UpdateHistory, UpdateSubjectType};
 use crate::token::Token;
@@ -243,5 +244,53 @@ impl Db {
             .do_update().set(token::current_supply.eq(token::current_supply))
             .execute(&self.connection)?;
         Ok(())
+    }
+
+    pub fn update_utxo_set(&self, address: &cashcontracts::Address) -> QueryResult<()> {
+        self.connection.transaction(|| {
+            diesel::delete(utxo_address::table)
+                .filter(
+                    utxo_address::address.eq(address.bytes().to_vec())
+                )
+                .execute(&self.connection)?;
+            diesel::insert_into(utxo_address::table)
+                .values(
+                    tx_output::table
+                        .left_join(tx::table)
+                        .left_outer_join(tx_input::table.on(
+                            tx::hash.eq(tx_input::output_tx)
+                                .and(tx_output::idx.eq(tx_input::output_idx))
+                        ))
+                        .filter(tx_input::tx.is_null())
+                        .filter(tx_output::address.eq(address.bytes().to_vec()))
+                        .select((tx_output::tx, tx_output::idx, tx_output::address))
+                )
+                .execute(&self.connection)?;
+            Ok(())
+        })
+    }
+
+    pub fn update_utxo_set_exch(&self) -> QueryResult<()> {
+        self.connection.transaction(|| {
+            diesel::delete(utxo_trade_offer::table)
+                .execute(&self.connection)?;
+            diesel::insert_into(utxo_trade_offer::table)
+                .values(
+                    tx_output::table
+                        .left_join(tx::table)
+                        .left_join(trade_offer::table.on(
+                            tx_output::tx.eq(trade_offer::tx)
+                                .and(tx_output::idx.nullable().eq(trade_offer::output_idx))
+                        ))
+                        .left_outer_join(tx_input::table.on(
+                            tx::hash.eq(tx_input::output_tx)
+                                .and(tx_output::idx.eq(tx_input::output_idx))
+                        ))
+                        .filter(tx_input::tx.is_null())
+                        .select((tx_output::tx, tx_output::idx))
+                )
+                .execute(&self.connection)?;
+            Ok(())
+        })
     }
 }
