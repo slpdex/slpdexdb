@@ -24,13 +24,13 @@ CREATE TABLE tx (
 
 CREATE TABLE slp_tx (
     "tx"      BIGINT PRIMARY KEY REFERENCES tx ("id") ON DELETE CASCADE,
-    "token"   INT REFERENCES token ("id") ON DELETE RESTRICT,
+    "token"   INT NOT NULL REFERENCES token ("id") ON DELETE RESTRICT,
     "version" INT NOT NULL,
     "slp_type" VARCHAR(14) NOT NULL
 );
 
 CREATE TABLE tx_output (
-    "tx"               BIGINT REFERENCES tx (id) ON DELETE CASCADE,
+    "tx"               BIGINT NOT NULL REFERENCES tx (id) ON DELETE CASCADE,
     "idx"              INT NOT NULL,
     "value_satoshis"   BIGINT NOT NULL,
     "value_token_base" BIGINT NOT NULL,
@@ -40,7 +40,7 @@ CREATE TABLE tx_output (
 );
 
 CREATE TABLE tx_input (
-    "tx"         BIGINT REFERENCES tx (id) ON DELETE CASCADE,
+    "tx"         BIGINT NOT NULL REFERENCES tx (id) ON DELETE CASCADE,
     "idx"        INT NOT NULL,
     "output_tx"  BYTEA NOT NULL,
     "output_idx" INT NOT NULL,
@@ -50,7 +50,7 @@ CREATE TABLE tx_input (
 
 CREATE TABLE trade_offer (
     "id"                     SERIAL PRIMARY KEY,
-    "tx"                     BIGINT REFERENCES tx (id) ON DELETE CASCADE UNIQUE,
+    "tx"                     BIGINT NOT NULL REFERENCES tx (id) ON DELETE CASCADE UNIQUE,
     "output_idx"             INT,
     "input_tx"               BYTEA NOT NULL,
     "input_idx"              INT NOT NULL,
