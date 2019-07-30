@@ -80,10 +80,14 @@ impl TokenSource {
             .filter_map(|filter| match filter {
                 TxFilter::MinTxHash(tx_hash) => Some(
                     ("tokenDetails.tokenIdHex",
-                     object!{"$gt" => cashcontracts::tx_hash_to_hex(tx_hash)})
+                     object!{"$gt" => hex::encode(tx_hash)})
                 ),
                 TxFilter::MinBlockHeight(height) => Some(
                     ("tokenStats.block_created", object!{"$gte" => *height})
+                ),
+                TxFilter::TokenId(token_hash) => Some(
+                    ("tokenDetails.tokenIdHex",
+                     JsonValue::String(hex::encode(token_hash)))
                 ),
                 _ => None,
             })
