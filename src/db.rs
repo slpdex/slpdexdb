@@ -107,11 +107,11 @@ impl Db {
                 .zip(tx_ids.iter().cloned())
                 .filter_map(|(tx, id)| {
                     match &tx.tx_type {
-                        TxType::SLP {token_hash, version, slp_type} => Some(models::SlpTx {
+                        TxType::SLP {token_hash, token_type, slp_type} => Some(models::SlpTx {
                             tx: id,
-                            slp_type: slp_type.to_str().to_string(),
+                            slp_type: String::from_utf8_lossy(slp_type.to_bytes()).to_string(),
                             token: *token_ids.get(token_hash.as_ref())?,
-                            version: *version,
+                            version: *token_type,
                         }),
                         TxType::Default => None,
                     }
@@ -233,8 +233,8 @@ impl Db {
                         symbol: token.symbol.clone(),
                         name: token.name.clone(),
                         document_hash: token.document_hash.clone(),
-                        initial_supply: token.initial_supply,
-                        current_supply: token.current_supply,
+                        initial_supply: token.initial_supply as i64,
+                        current_supply: token.current_supply as i64,
                         block_created_height: token.block_created_height,
                     }
                 })
@@ -244,6 +244,32 @@ impl Db {
             .do_update().set(token::current_supply.eq(token::current_supply))
             .execute(&self.connection)?;
         Ok(())
+    }
+
+    pub fn token(&self, token_hash: &[u8; 32]) -> QueryResult<Option<Token>> {
+        let token: Option<models::Token> = token::table
+            .filter(token::hash.eq(token_hash.to_vec()))
+            .first::<models::Token>(&self.connection)
+            .optional()?;
+        Ok(token.map(|token| {
+            Token {
+                hash: {
+                    let mut hash = [0; 32];
+                    hash.copy_from_slice(&token.hash);
+                    hash
+                },
+                decimals: token.decimals,
+                timestamp: token.timestamp,
+                version_type: token.version_type,
+                document_uri: token.document_uri,
+                symbol: token.symbol,
+                name: token.name,
+                document_hash: token.document_hash,
+                initial_supply: token.initial_supply as u64,
+                current_supply: token.current_supply as u64,
+                block_created_height: token.block_created_height,
+            }
+        }))
     }
 
     pub fn update_utxo_set(&self, address: &cashcontracts::Address) -> QueryResult<()> {
