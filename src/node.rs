@@ -4,20 +4,32 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::message::Message;
 use crate::version_message::{VersionMessage, VerackMessage};
-use crate::inv_message::{InvMessage, ObjectType};
+use crate::inv_message::{InvMessage, InvVector, ObjectType};
 use crate::headers_message::{HeadersMessage};
 use crate::get_headers_message::GetHeadersMessage;
+use crate::get_data_message::GetDataMessage;
+use crate::tx_message::TxMessage;
+use crate::tx_history::TxHistory;
+use crate::tx_source::TxSource;
 use crate::db::Db;
+use crate::config::SLPDEXConfig;
 
 use cashcontracts::tx_hash_to_hex;
 
 pub struct Node {
     connections: Vec<TcpStream>,
     db: Db,
+    config: SLPDEXConfig,
 }
 
 impl Node {
-    pub fn new(db: Db) -> Self { Node { connections: Vec::new(), db } }
+    pub fn new(db: Db) -> Self {
+        Node {
+            connections: Vec::new(),
+            db,
+            config: SLPDEXConfig::default(),
+        }
+    }
 
     pub fn connect(&mut self, addr: impl ToSocketAddrs) -> io::Result<()> {
         self.connections.push(TcpStream::connect(addr)?);
@@ -62,7 +74,7 @@ impl Node {
         Ok(())
     }
 
-    fn handle_message(db: &Db, connection: &mut TcpStream, msg: &Message) -> io::Result<()> {
+    fn handle_message(db: &Db, connection: &mut TcpStream, msg: &Message, config: &SLPDEXConfig) -> io::Result<()> {
         match msg.header().command_name() {
             b"verack" => {
                 VerackMessage.message().write_to_stream(connection)?;
@@ -72,11 +84,14 @@ impl Node {
             b"inv" => {
                 let inv_message = InvMessage::from_payload(msg.payload())?;
                 //println!("{}", inv_message);
+                let mut tx_hashes = Vec::new();
                 for inv_vector in inv_message.inv_vectors.iter() {
                     if inv_vector.type_id == ObjectType::Tx {
                         println!("New tx: {}", tx_hash_to_hex(&inv_vector.hash));
+                        tx_hashes.push(inv_vector.clone());
                     }
                 }
+                GetDataMessage {inv_vectors: tx_hashes}.message().write_to_stream(connection)?;
             },
             b"headers" => {
                 let mut cur = io::Cursor::new(msg.payload());
@@ -87,6 +102,28 @@ impl Node {
                 }
                 db.add_headers(&headers.headers).unwrap();
                 Self::request_get_headers(db, connection)?;
+            },
+            b"tx" => {
+                let unix_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                let tx_msg = TxMessage::from_payload(msg.payload())?;
+                println!("tx={}", cashcontracts::tx_hash_to_hex(&tx_msg.tx.hash()));
+                let mut tx_history = TxHistory::from_txs(&[tx_msg.tx], unix_time as i64, config, db);
+                tx_history.txs.iter().for_each(|tx| {
+                    match &tx.tx_type {
+                        crate::tx_history::TxType::SLP {token_hash, ..} => println!("SLP token={}", hex::encode(token_hash)),
+                        _ => {},
+                    };
+                });
+                tx_history.validate_slp(&TxSource::new(), db, config);
+                tx_history.txs.iter().for_each(|tx| {
+                    match &tx.tx_type {
+                        crate::tx_history::TxType::SLP {token_hash, ..} => println!("valid SLP token={}", hex::encode(token_hash)),
+                        _ => {},
+                    };
+                });
+                tx_history.trade_offers.iter().for_each(|(idx, offer)| {
+                    println!("trade offer {}: {:?}", idx, offer);
+                });
             },
             _ => {},
         }
@@ -99,8 +136,7 @@ impl Node {
         loop {
             match Message::from_stream(connection) {
                 Ok(msg) => {
-                    //println!("msg: {}", msg);
-                    Self::handle_message(&self.db, connection, &msg)?;
+                    Self::handle_message(&self.db, connection, &msg, &self.config)?;
                 },
                 Err(err) => {
                     println!("Invalid message: {:?}", err);
