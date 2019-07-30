@@ -11,6 +11,7 @@ pub enum TxFilter {
     TokenId([u8; 32]),
     MinBlockHeight(i32),
     MinTxHash([u8; 32]),
+    TxHash([u8; 32]),
     Exch,
     SortBy(SortKey),
 }
@@ -20,22 +21,30 @@ pub enum SortKey {
     TxHash,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TxResultKind {
+    Complete,
+    SLPValidity,
+}
+
 pub struct TxSource {
     endpoint: Endpoint
 }
 
 pub mod tx_result {
-    use serde::Deserialize;
-    #[derive(Deserialize, Debug)]
+    use serde::{Deserialize, Serialize};
+    use std::fmt::Debug;
+
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct Blk {
         pub t: u64,
         pub i: i32,
     }
-    #[derive(Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct Tx {
         pub h: String,
     }
-    #[derive(Deserialize, Debug, Eq, PartialEq)]
+    #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
     #[serde(untagged)]
     pub enum StackItem {
         Str(String),
@@ -53,13 +62,13 @@ pub mod tx_result {
             }
         }
     }
-    #[derive(Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct TxInputEdge {
         pub a: Option<String>,
         pub h: String,
         pub i: i32,
     }
-    #[derive(Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct TxInput {
         pub e: TxInputEdge,
         #[serde(default)]
@@ -79,23 +88,23 @@ pub mod tx_result {
         #[serde(default)]
         pub b7: StackItem,
     }
-    #[derive(Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct TxOutputEdge {
         pub v: u64,
         pub a: Option<String>,
     }
-    #[derive(Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct TxOutput {
         pub e: TxOutputEdge,
         #[serde(default)]
         pub b0: StackItem,
     }
-    #[derive(Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct TxSLP {
         pub valid: bool,
         pub detail: TxSLPDetail
     }
-    #[derive(Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct TxSLPDetail {
         pub decimals: i32,
         #[serde(rename = "tokenIdHex")]
@@ -106,12 +115,12 @@ pub mod tx_result {
         pub version_type: i32,
         pub outputs: Vec<TxSLPOutput>,
     }
-    #[derive(Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct TxSLPOutput {
         pub address: String,
         pub amount: String,
     }
-    #[derive(Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct TxEntry {
         pub blk: Option<Blk>,
         pub tx: Tx,
@@ -121,10 +130,23 @@ pub mod tx_result {
         pub outputs: Vec<TxOutput>,
         pub slp: Option<TxSLP>,
     }
-    #[derive(Deserialize, Debug)]
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct TxSLPValidity {
+        pub tx: Tx,
+        pub slp: TxSLP,
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct TxResult {
         pub u: Vec<TxEntry>,
         pub c: Vec<TxEntry>,
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct TxSLPValidityResult {
+        pub u: Vec<TxSLPValidity>,
+        pub c: Vec<TxSLPValidity>,
     }
 }
 
@@ -200,6 +222,16 @@ impl TxFilter {
     }
 
     pub fn base_conditions(filters: &[TxFilter]) -> Vec<(&'static str, JsonValue)> {
+        let tx_hashes = filters.iter()
+            .filter_map(|filter| {
+                match filter {
+                    TxFilter::TxHash(tx_hash) => Some(
+                        JsonValue::String(cashcontracts::tx_hash_to_hex(tx_hash))
+                    ),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
         filters.iter()
             .filter_map(|filter| {
                 match filter {
@@ -213,7 +245,13 @@ impl TxFilter {
                     _ => None,
                 }
             })
+            .chain(if tx_hashes.len() > 0 {
+                vec![("tx.h", object!{"$in" => JsonValue::Array(tx_hashes)})]
+            } else {
+                vec![]
+            })
             .collect()
+
     }
 
     pub fn sort_by(filters: &[TxFilter]) -> JsonValue {
@@ -241,64 +279,88 @@ impl TxSource {
     fn _query(&self,
               endpoint_url: &str,
               conditions: Vec<(&'static str, JsonValue)>,
-              sort: JsonValue)
-            -> reqwest::Result<tx_result::TxResult> {
-        let mut condition_json = Object::new();
-        let mut or_conditions_json = Vec::new();
+              sort: JsonValue,
+              result_kind: TxResultKind) -> reqwest::Result<String> {
+        let mut conditions_json = Vec::new();
         for (key, json) in conditions {
-            if key == "$or" {
-                or_conditions_json.push(object!{"$or" => json});
-            } else {
-                condition_json.insert(key, json);
-            }
+            conditions_json.push(object!{key => json});
         }
-        if or_conditions_json.len() > 0 {
-            condition_json.insert("$and", JsonValue::Array(or_conditions_json));
-        }
-        let query_json = json::stringify(object!{
+        let mut query = object!{
             "v" => 3,
             "q" => object!{
                 "db" => array!["u", "c"],
-                "find" => JsonValue::Object(condition_json),
+                "find" => object!{"$and" => JsonValue::Array(conditions_json)},
                 "sort" => sort,
             },
-        });
+        };
+        if result_kind == TxResultKind::SLPValidity {
+            query["r"] = object!{"f" => "[.[] | {tx: .tx, slp: .slp} ]"};
+        }
+        let query_json = json::stringify(query);
         println!("{}", query_json);
         let query_b64 = base64::encode(&query_json);
-        let text = reqwest::get(&format!("{}{}", endpoint_url, query_b64))?.text()?;
-        println!("{}", text);
-        Ok(serde_json::from_str(&text).unwrap())
+        reqwest::get(&format!("{}{}", endpoint_url, query_b64))?.text()
+        //println!("{}", text);
+        //Ok(serde_json::from_str::<R>(&text).unwrap())
+    }
+
+    fn _request_txs(&self,
+                    filters: &[TxFilter],
+                    config: &SLPDEXConfig,
+                    result_kind: TxResultKind)
+            -> reqwest::Result<Vec<String>> {
+        let slp_only =
+            filters.iter().any(|f| match f {
+                TxFilter::TokenId(_) | TxFilter::Exch => true,
+                _ => false,
+            }) || result_kind == TxResultKind::SLPValidity;
+        let base_conditions = TxFilter::base_conditions(filters);
+        let sort = TxFilter::sort_by(filters);
+        let mut results = Vec::new();
+        if !slp_only {
+            let mut bch_conditions = TxFilter::bch_conditions(filters);
+            bch_conditions.append(&mut base_conditions.clone());
+            results.push(self._query(
+                &self.endpoint.bitdb_endpoint_url,
+                bch_conditions,
+                sort.clone(),
+                result_kind,
+            )?);
+        }
+        let mut slp_conditions = TxFilter::slp_conditions(filters, config);
+        slp_conditions.append(&mut base_conditions.clone());
+        results.push(self._query(
+            &self.endpoint.slpdb_endpoint_url,
+            slp_conditions,
+            sort,
+            result_kind,
+        )?);
+        Ok(results)
     }
 
     pub fn request_txs(&self, filters: &[TxFilter], config: &SLPDEXConfig)
             -> reqwest::Result<Vec<tx_result::TxEntry>> {
-        let slp_only = filters.iter().any(|f| match f {
-            TxFilter::TokenId(_) | TxFilter::Exch => true,
-            _ => false,
-        });
-        let base_conditions = TxFilter::base_conditions(filters);
-        let sort = TxFilter::sort_by(filters);
-        let mut entries = Vec::new();
-        if !slp_only {
-            let mut bch_conditions = TxFilter::bch_conditions(filters);
-            bch_conditions.append(&mut base_conditions.clone());
-            let mut bch_result = self._query(
-                &self.endpoint.bitdb_endpoint_url,
-                bch_conditions,
-                sort.clone(),
-            )?;
-            entries.append(&mut bch_result.c);
-            entries.append(&mut bch_result.u);
+        let results_json = self._request_txs(filters, config, TxResultKind::Complete)?;
+        let mut results = Vec::new();
+        for result_json in results_json {
+            let mut result = serde_json
+                ::from_str::<tx_result::TxResult>(&result_json).unwrap();
+            results.append(&mut result.u);
+            results.append(&mut result.c);
         }
-        let mut slp_conditions = TxFilter::slp_conditions(filters, config);
-        slp_conditions.append(&mut base_conditions.clone());
-        let mut slp_result = self._query(
-            &self.endpoint.slpdb_endpoint_url,
-            slp_conditions,
-            sort,
-        )?;
-        entries.append(&mut slp_result.c);
-        entries.append(&mut slp_result.u);
-        Ok(entries)
+        Ok((results))
+    }
+
+    pub fn request_slp_tx_validity(&self, filters: &[TxFilter], config: &SLPDEXConfig)
+            -> reqwest::Result<Vec<tx_result::TxSLPValidity>> {
+        let results_json = self._request_txs(filters, config, TxResultKind::Complete)?;
+        let mut results = Vec::new();
+        for result_json in results_json {
+            let mut result = serde_json
+                ::from_str::<tx_result::TxSLPValidityResult>(&result_json).unwrap();
+            results.append(&mut result.u);
+            results.append(&mut result.c);
+        }
+        Ok((results))
     }
 }
