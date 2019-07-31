@@ -7,6 +7,7 @@ ALTER TABLE tx_output
 
 ALTER TABLE trade_offer
     DROP COLUMN "price_per_token",
+    DROP COLUMN "is_inverted",
     ADD COLUMN "approx_price_per_token" DOUBLE PRECISION,
     ADD COLUMN "price_per_token_numer" BIGINT,
     ADD COLUMN "price_per_token_denom" BIGINT;
