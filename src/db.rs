@@ -7,8 +7,12 @@ use crate::tx_history::{TxHistory, TxType};
 use crate::update_history::{UpdateHistory, UpdateSubjectType};
 use crate::token::Token;
 use crate::{models, schema::*};
+use crate::slp_amount::SLPAmount;
+use crate::convert_numeric::{rational_to_pg_numeric, pg_numeric_to_rational};
 
 use std::collections::{HashMap, HashSet, BTreeSet};
+
+const PRICE_DIGITS: u16 = 26;
 
 pub struct Db {
     connection: PgConnection,
@@ -128,7 +132,7 @@ impl Db {
                             tx: id,
                             idx: output_idx as i32,
                             value_satoshis: output.value_satoshis as i64,
-                            value_token_base: output.value_token_base as i64,
+                            value_token_base: output.value_token_base.into(),
                             address: output.output.address()
                                 .map(|addr| addr.bytes().to_vec()),
                             output_type: output.output.id(),
@@ -166,11 +170,11 @@ impl Db {
                         output_idx: trade_offer.output_idx,
                         input_idx: trade_offer.input_idx,
                         input_tx: trade_offer.input_tx.to_vec(),
-                        approx_price_per_token: trade_offer.approx_price_per_token,
-                        price_per_token_numer: trade_offer.price_per_token_numer,
-                        price_per_token_denom: trade_offer.price_per_token_denom,
+                        price_per_token: rational_to_pg_numeric(trade_offer.price_per_token.clone(),
+                                                                PRICE_DIGITS),
+                        is_inverted: trade_offer.is_inverted,
                         script_price: trade_offer.script_price,
-                        sell_amount_token_base: trade_offer.sell_amount_token_base,
+                        sell_amount_token_base: trade_offer.sell_amount_token_base.into(),
                         receiving_address: trade_offer.receiving_address.bytes().to_vec(),
                     }
                 })
@@ -233,8 +237,8 @@ impl Db {
                         symbol: token.symbol.clone(),
                         name: token.name.clone(),
                         document_hash: token.document_hash.clone(),
-                        initial_supply: token.initial_supply as i64,
-                        current_supply: token.current_supply as i64,
+                        initial_supply: token.initial_supply.into(),
+                        current_supply: token.current_supply.into(),
                         block_created_height: token.block_created_height,
                     }
                 })
@@ -265,8 +269,10 @@ impl Db {
                 symbol: token.symbol,
                 name: token.name,
                 document_hash: token.document_hash,
-                initial_supply: token.initial_supply as u64,
-                current_supply: token.current_supply as u64,
+                initial_supply: SLPAmount::from_numeric_decimals(&token.initial_supply,
+                                                                 token.decimals as u32),
+                current_supply: SLPAmount::from_numeric_decimals(&token.current_supply,
+                                                                 token.decimals as u32),
                 block_created_height: token.block_created_height,
             }
         }))
