@@ -1,6 +1,5 @@
 use cashcontracts::Address;
-use itertools::Itertools;
-use json::{JsonValue, object, array, object::Object};
+use json::{JsonValue, object, array};
 use crate::config::SLPDEXConfig;
 use crate::endpoint::Endpoint;
 
@@ -33,7 +32,6 @@ pub struct TxSource {
 
 pub mod tx_result {
     use serde::{Deserialize, Serialize};
-    use std::fmt::Debug;
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct Blk {
@@ -260,7 +258,6 @@ impl TxFilter {
                 TxFilter::SortBy(sort) => {
                     match sort {
                         SortKey::TxHash => Some(object!{"tx.h" => 1}),
-                        _ => None,
                     }
                 },
                 _ => None,
@@ -348,7 +345,7 @@ impl TxSource {
             results.append(&mut result.u);
             results.append(&mut result.c);
         }
-        Ok((results))
+        Ok(results)
     }
 
     pub fn request_slp_tx_validity(&self, filters: &[TxFilter], config: &SLPDEXConfig)
@@ -361,6 +358,6 @@ impl TxSource {
             results.append(&mut result.u);
             results.append(&mut result.c);
         }
-        Ok((results))
+        Ok(results)
     }
 }

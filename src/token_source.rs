@@ -100,7 +100,6 @@ impl TokenSource {
                 TxFilter::SortBy(sort) => {
                     match sort {
                         SortKey::TxHash => Some(object!{"tokenDetails.tokenIdHex" => 1}),
-                        _ => None,
                     }
                 },
                 _ => None,

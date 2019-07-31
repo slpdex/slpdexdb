@@ -3,20 +3,10 @@ use rug::{Rational, Integer, ops::Pow};
 use std::{fmt, fmt::{Formatter, Display}};
 
 pub fn pg_numeric_to_rational(numeric: &PgNumeric) -> Option<Rational> {
-    let (is_signed, weight, scale, digits) = match *numeric {
-        PgNumeric::Positive {
-            weight,
-            scale,
-            ref digits,
-        } => (false, weight, scale, digits),
-        PgNumeric::Negative {
-            weight,
-            scale,
-            ref digits,
-        } => (true, weight, scale, digits),
-        PgNumeric::NaN => {
-            return None;
-        }
+    let (is_signed, weight, digits) = match *numeric {
+        PgNumeric::Positive { weight, ref digits, .. } => (false, weight, digits),
+        PgNumeric::Negative { weight, ref digits, .. } => (true, weight, digits),
+        PgNumeric::NaN => { return None },
     };
     let ten = Rational::from(10u8);
     let ten_thousand = Integer::from(10_000u16);
@@ -38,11 +28,9 @@ pub fn pg_numeric_to_rational(numeric: &PgNumeric) -> Option<Rational> {
 
 pub fn pg_numeric_to_i128(numeric: &PgNumeric) -> Option<i128> {
     let (is_signed, weight, digits) = match *numeric {
-        PgNumeric::Positive {weight, scale, ref digits} => (false, weight, digits),
-        PgNumeric::Negative {weight, scale, ref digits} => (true, weight, digits),
-        PgNumeric::NaN => {
-            return None;
-        }
+        PgNumeric::Positive {weight, ref digits, ..} => (false, weight, digits),
+        PgNumeric::Negative {weight, ref digits, ..} => (true, weight, digits),
+        PgNumeric::NaN => { return None },
     };
     let mut result = 0i128;
     for digit in digits {
@@ -77,9 +65,8 @@ pub fn i128_to_pg_numeric(mut val: i128) -> PgNumeric {
     }
 }
 
-pub fn rational_to_pg_numeric(mut rational: Rational, scale: u16) -> PgNumeric {
+pub fn rational_to_pg_numeric(rational: Rational, scale: u16) -> PgNumeric {
     let zero = Rational::from(0);
-    let ten = Rational::from(10);
     let ten_thousand = Integer::from(10_000);
     let ten_thousand_r = Rational::from(10_000);
     let (mut fract, mut trunc) = rational.fract_trunc(Integer::new());
@@ -110,7 +97,7 @@ pub fn rational_to_pg_numeric(mut rational: Rational, scale: u16) -> PgNumeric {
     let preceding_zeros = digits.iter().take_while(|i| **i == 0).count();
     let trailing_zeros = digits.iter().rev().take_while(|i| **i == 0).count();
     let weight = if n_digits_pre == 0 { -1 } else { n_digits_pre - 1 };
-    let weight = (weight - preceding_zeros as i16);
+    let weight = weight - preceding_zeros as i16;
     let digits = digits[preceding_zeros..digits.len() - trailing_zeros].to_vec();
     if is_nonnegative {
         PgNumeric::Positive { digits, weight, scale }

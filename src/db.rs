@@ -2,13 +2,12 @@ use diesel::pg::PgConnection;
 use diesel::prelude::*;
 
 use crate::block::BlockHeader;
-use crate::tx_source::TxFilter;
 use crate::tx_history::{TxHistory, TxType};
 use crate::update_history::{UpdateHistory, UpdateSubjectType};
 use crate::token::Token;
 use crate::{models, schema::*};
 use crate::slp_amount::SLPAmount;
-use crate::convert_numeric::{rational_to_pg_numeric, pg_numeric_to_rational};
+use crate::convert_numeric::rational_to_pg_numeric;
 
 use std::collections::{HashMap, HashSet, BTreeSet};
 
@@ -191,7 +190,7 @@ impl Db {
             -> QueryResult<Option<UpdateHistory>> {
         let update: Option<models::UpdateHistory> = update_history::table
             .filter(update_history::subject_type.eq(subject_type as i32))
-            .order((update_history::timestamp.desc()))
+            .order(update_history::timestamp.desc())
             .limit(1)
             .first::<models::UpdateHistory>(&self.connection)
             .optional()?;

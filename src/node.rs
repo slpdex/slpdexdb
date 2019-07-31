@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::message::Message;
 use crate::version_message::{VersionMessage, VerackMessage};
-use crate::inv_message::{InvMessage, InvVector, ObjectType};
+use crate::inv_message::{InvMessage, ObjectType};
 use crate::headers_message::{HeadersMessage};
 use crate::get_headers_message::GetHeadersMessage;
 use crate::get_data_message::GetDataMessage;

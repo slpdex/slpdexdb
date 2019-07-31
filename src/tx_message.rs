@@ -1,8 +1,6 @@
 use crate::message::Message;
 use cashcontracts::Tx;
-use cashcontracts::serialize::{read_var_int, write_var_int};
-use byteorder::{LittleEndian, WriteBytesExt};
-use std::{io, io::Write};
+use std::io;
 
 #[derive(Clone, Debug)]
 pub struct TxMessage {

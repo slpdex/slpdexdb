@@ -3,7 +3,7 @@ use crate::config::SLPDEXConfig;
 use crate::token::Token;
 use crate::db::Db;
 use crate::slp_amount::SLPAmount;
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{BigEndian, ReadBytesExt};
 use std::io;
 use std::collections::{HashSet, HashMap};
 use cashcontracts::{Output, AddressType, Address};
@@ -149,7 +149,7 @@ impl TxHistory {
                         config: &SLPDEXConfig) -> Self {
         let mut historic_txs = Vec::with_capacity(entries.len());
         let mut trade_offers = Vec::new();
-        for (idx, entry) in entries.iter().enumerate() {
+        for entry in entries.iter() {
             let inputs = entry.inputs.iter()
                 .map(|input| {
                     HistoricTxInput {
@@ -291,7 +291,7 @@ impl TxHistory {
     pub fn from_txs(txs: &[cashcontracts::Tx], now: i64, config: &SLPDEXConfig, db: &Db) -> Self {
         let mut historic_txs = Vec::new();
         let mut trade_offers = Vec::new();
-        for (idx, tx) in txs.iter().enumerate() {
+        for tx in txs.iter() {
             let inputs = tx.inputs().iter()
                 .map(|input| {
                     HistoricTxInput {
@@ -340,8 +340,9 @@ impl TxHistory {
                 outputs,
             };
             let trade_offer = match &historic_tx.tx_type {
-                TxType::SLP { token_hash, .. } =>
-                    token.and_then(|token| TradeOffer::from_tx(&historic_tx, tx, config, &token)),
+                TxType::SLP { .. } => token.and_then(
+                    |token| TradeOffer::from_tx(&historic_tx, tx, config, &token)
+                ),
                 _ => None,
             };
             match trade_offer {
@@ -373,7 +374,7 @@ impl TxHistory {
         }
     }
 
-    pub fn validate_slp(&mut self, tx_source: &TxSource, db: &Db, config: &SLPDEXConfig)
+    pub fn validate_slp(&mut self, tx_source: &TxSource, _db: &Db, config: &SLPDEXConfig)
             -> reqwest::Result<()> {
         let tx_to_check = self.txs.iter()
             .flat_map(|tx| {
@@ -401,8 +402,8 @@ impl TxHistory {
         let mut trade_offers = Vec::new();
         for i in 0..self.txs.len() {
             let tx = self.txs.remove(0);
-            let (token_hash, token_type, slp_type) = match &tx.tx_type {
-                TxType::SLP {token_hash, token_type, slp_type} => (token_hash, token_type, slp_type),
+            let (token_hash, token_type) = match &tx.tx_type {
+                TxType::SLP {token_hash, token_type, ..} => (token_hash, token_type),
                 TxType::Default => {
                     txs.push(tx);
                     continue;
@@ -496,8 +497,8 @@ impl TradeOffer {
                       tx_type: &TxType,
                       config: &SLPDEXConfig,
                       receiving_address: &cashcontracts::Address) -> Option<SLPAmount> {
-        let (token_hash, token_type, slp_type) = match tx_type {
-            TxType::SLP {token_hash, token_type, slp_type} => (token_hash, *token_type, slp_type),
+        let (token_hash, token_type) = match tx_type {
+            TxType::SLP {token_hash, token_type, ..} => (token_hash, *token_type),
             TxType::Default => return None,
         };
         let address = output.output.address()?;
@@ -535,7 +536,7 @@ impl TradeOffer {
                       config: &SLPDEXConfig,
                       decimals: u32)
             -> Option<Self> {
-        entry.inputs.iter().enumerate().find_map(|(i, input)| {
+        entry.inputs.iter().find_map(|input| {
             if input.b0 == tx_result::StackItem::Str(base64::encode("EXCH")) &&
                     input.b1 == (tx_result::StackItem::Op {op: 0x52}) {
                 let price = entry.slp.as_ref()
@@ -583,10 +584,10 @@ impl TradeOffer {
                    tx: &cashcontracts::Tx,
                    config: &SLPDEXConfig,
                    token: &Token) -> Option<Self> {
-        use cashcontracts::{Op::*, OpCodeType::*, AddressType, Address, serialize};
+        use cashcontracts::{Op::*, OpCodeType::*};
         println!("validating trade offer");
-        let (token_hash, token_type, slp_type) = match &historic_tx.tx_type {
-            TxType::SLP {token_hash, token_type, slp_type} => (token_hash, *token_type, slp_type),
+        let (token_hash, token_type) = match &historic_tx.tx_type {
+            TxType::SLP {token_hash, token_type, ..} => (token_hash, *token_type),
             TxType::Default => return { println!("isnt slp"); None },
         };
         tx.inputs().iter().find_map(|input| {

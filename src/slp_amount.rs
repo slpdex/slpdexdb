@@ -1,7 +1,7 @@
 use std::num::ParseIntError;
 use std::ops::{Add, Sub, Mul, Div, AddAssign, SubAssign, MulAssign, DivAssign};
 use std::iter::Sum;
-use std::io::{Write, Cursor, self};
+use std::io::{Cursor, self};
 use std::cmp::Ordering;
 use diesel::data_types::PgNumeric;
 use crate::convert_numeric::{i128_to_pg_numeric, pg_numeric_to_i128};
@@ -195,7 +195,7 @@ impl Sum for SLPAmount {
 impl Display for SLPAmount {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         if self.decimals == 0 {
-            f.pad_integral(self.base_amount >= 0, "", &self.base_amount.to_string());
+            f.pad_integral(self.base_amount >= 0, "", &self.base_amount.to_string())?;
             return Ok(())
         }
         let factor = (10i128).pow(self.decimals);
@@ -205,7 +205,7 @@ impl Display for SLPAmount {
             self.base_amount >= 0,
             "",
             &format!("{}.{:0decimals$}", integer_part, fract_part, decimals=self.decimals as usize),
-        );
+        )?;
         Ok(())
     }
 }

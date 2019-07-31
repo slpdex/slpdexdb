@@ -1,8 +1,8 @@
 use crate::message::Message;
-use crate::inv_message::{ObjectType, InvVector};
-use cashcontracts::serialize::{read_var_int, write_var_int};
+use crate::inv_message::InvVector;
+use cashcontracts::serialize::write_var_int;
 use byteorder::{LittleEndian, WriteBytesExt};
-use std::{io, io::Write};
+use std::io::Write;
 
 #[derive(Clone, Debug)]
 pub struct GetDataMessage {
