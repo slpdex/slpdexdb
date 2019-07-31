@@ -2,10 +2,12 @@ use crate::tx_source::{tx_result, TxSource, TxFilter};
 use crate::config::SLPDEXConfig;
 use crate::token::Token;
 use crate::db::Db;
+use crate::slp_amount::SLPAmount;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 use std::collections::{HashSet, HashMap};
 use cashcontracts::{Output, AddressType, Address};
+use rug::Rational;
 
 #[derive(Clone, Debug)]
 pub struct TxHistory {
@@ -52,7 +54,7 @@ pub enum OutputType {
 #[derive(Clone, Debug)]
 pub struct HistoricTxOutput {
     pub value_satoshis: u64,
-    pub value_token_base: u64,
+    pub value_token_base: SLPAmount,
     pub output: OutputType,
 }
 
@@ -69,11 +71,10 @@ pub struct TradeOffer {
     pub output_idx: Option<i32>,
     pub input_tx: [u8; 32],
     pub input_idx: i32,
-    pub approx_price_per_token: f64,
-    pub price_per_token_numer: i64,
-    pub price_per_token_denom: i64,
+    pub price_per_token: Rational,
     pub script_price: i64,
-    pub sell_amount_token_base: i64,
+    pub is_inverted: bool,
+    pub sell_amount_token_base: SLPAmount,
     pub receiving_address: Address,
 }
 
@@ -164,11 +165,16 @@ impl TxHistory {
                     HistoricTxOutput {
                         value_satoshis: output.e.v,
                         value_token_base: match &entry.slp {
-                            Some(slp) if i > 0 => slp.detail.outputs.get(i - 1).and_then(
-                                |output| Token::parse_amount(slp.detail.decimals as u32,
-                                                             &output.amount)
-                            ).unwrap_or(0),
-                            _ => 0,
+                            Some(slp) if i > 0 => {
+                                let decimals = slp.detail.decimals as u32;
+                                slp.detail.outputs
+                                    .get(i - 1)
+                                    .and_then(|output|
+                                        SLPAmount::from_str_decimals(&output.amount, decimals).ok()
+                                    )
+                                    .unwrap_or(SLPAmount::new(0, decimals))
+                            },
+                            _ => SLPAmount::new(0, 0),
                         },
                         output: if output.b0 == (tx_result::StackItem::Op {op: 0x6a}) {
                             OutputType::OpReturn
@@ -196,11 +202,13 @@ impl TxHistory {
                 inputs,
                 outputs,
             };
-            let trade_offer = TradeOffer::from_entry(&historic_tx, entry, config);
-            match trade_offer {
-                Some(trade_offer) => trade_offers.push((historic_txs.len(), trade_offer)),
-                None => {},
-            }
+            entry.slp.as_ref().and_then(|slp| {
+                trade_offers.push((
+                    historic_txs.len(),
+                    TradeOffer::from_entry(&historic_tx, entry, config, slp.detail.decimals as u32)?,
+                ));
+                Some(())
+            });
             historic_txs.push(historic_tx);
         }
         TxHistory {
@@ -243,7 +251,8 @@ impl TxHistory {
         }
     }
 
-    pub fn _process_slp_output(script: &cashcontracts::Script) -> Option<(TxType, Vec<u64>)> {
+    pub fn _process_slp_output(script: &cashcontracts::Script, db: &Db)
+            -> Option<(TxType, Vec<SLPAmount>, Token)> {
         use cashcontracts::{Op::*, OpCodeType::*, serialize};
         if !script.is_slp_safe() { return None; }
         let ops = script.ops();
@@ -251,27 +260,28 @@ impl TxHistory {
         match (&ops[0], &ops[1], &ops[2], &ops[3], &ops[4]) {
             (Code(OpReturn), Push(lokad_id), Push(token_type), Push(tx_type), Push(token_id))
                     if lokad_id == b"SLP\0" && token_type.len() <= 2 && token_id.len() == 32 => {
+                let mut token_hash = [0; 32];
+                token_hash.copy_from_slice(token_id);
+                let token = Self::_fetch_token(&token_hash, db)?;
+                let decimals = token.decimals as u32;
                 let token_type = serialize::vec_to_int(token_type);
                 let amounts = ops[5..].iter()
                     .map(|op| {
                         match op {
-                            Push(vec) => Some(io::Cursor::new(vec).read_u64::<BigEndian>().ok()?),
+                            Push(vec) => Some(SLPAmount::from_slice(&vec, decimals).ok()?),
                             _ => None,
                         }
                     })
-                    .collect::<Option<Vec<u64>>>()?;
+                    .collect::<Option<Vec<_>>>()?;
                 if amounts.len() > 19 { return None }
                 Some((
                     TxType::SLP {
                         slp_type: SLPTxType::from_bytes(tx_type)?,
                         token_type,
-                        token_hash: {
-                            let mut token_hash = [0; 32];
-                            token_hash.copy_from_slice(token_id);
-                            token_hash
-                        },
+                        token_hash,
                     },
                     amounts,
+                    token,
                 ))
             },
             _ => { None }
@@ -291,16 +301,23 @@ impl TxHistory {
                     }
                 })
                 .collect::<Vec<_>>();
-            let (tx_type, slp_amounts) = tx.outputs().get(0)
+            let (tx_type, slp_amounts, token) = tx.outputs()
+                .get(0)
                 .and_then(|output| {
-                    Self::_process_slp_output(&output.script)
+                    let (tx_type, slp_amounts, token) =
+                        Self::_process_slp_output(&output.script, db)?;
+                    Some((tx_type, slp_amounts, Some(token)))
                 })
-                .unwrap_or((TxType::Default, vec![]));
+                .unwrap_or((TxType::Default, vec![], None));
             let outputs = tx.outputs().iter().enumerate()
                 .map(|(output_idx, output)| {
                     HistoricTxOutput {
                         value_satoshis: output.value,
-                        value_token_base: slp_amounts.get(output_idx).cloned().unwrap_or(0),
+                        value_token_base: slp_amounts.get(output_idx).cloned()
+                            .unwrap_or(SLPAmount::new(
+                                0,
+                                token.as_ref().map(|token| token.decimals as u32).unwrap_or(0),
+                            )),
                         output: Self::_process_output_script(&output.script),
                     }
                 })
@@ -324,8 +341,7 @@ impl TxHistory {
             };
             let trade_offer = match &historic_tx.tx_type {
                 TxType::SLP { token_hash, .. } =>
-                    db.token(token_hash).unwrap_or(None)
-                        .and_then(|token| TradeOffer::from_tx(&historic_tx, tx, config, &token)),
+                    token.and_then(|token| TradeOffer::from_tx(&historic_tx, tx, config, &token)),
                 _ => None,
             };
             match trade_offer {
@@ -337,6 +353,23 @@ impl TxHistory {
         TxHistory {
             txs: historic_txs,
             trade_offers,
+        }
+    }
+
+    pub fn _fetch_token(token_hash: &[u8; 32], db: &Db) -> Option<Token> {
+        match db.token(token_hash) {
+            Ok(Some(token)) => Some(token),
+            Ok(None) => {
+                let mut token_entries = crate::token_source::TokenSource::new()
+                    .request_tokens(&[TxFilter::TokenId(token_hash.clone())]).ok()?;
+                println!("token entry: {:?}", token_entries);
+                if token_entries.len() == 0 { return None }
+                let token = Token::from_entry(token_entries.remove(0))?;
+                println!("new token: {:?}", token);
+                db.add_tokens(&[token.clone()]).unwrap();
+                Some(token)
+            },
+            _ => None,
         }
     }
 
@@ -376,28 +409,13 @@ impl TxHistory {
                 },
             };
             println!("validating {}", cashcontracts::tx_hash_to_hex(&tx.hash));
-            let token = match db.token(token_hash) {
-                Ok(Some(token)) => token,
-                Ok(None) => {
-                    let mut token_entries = crate::token_source::TokenSource::new()
-                        .request_tokens(&[TxFilter::TokenId(token_hash.clone())])?;
-                    println!("token entry: {:?}", token_entries);
-                    if token_entries.len() == 0 { continue }
-                    match Token::from_entry(token_entries.remove(0)) {
-                        Some(token) => {
-                            println!("new token: {:?}", token);
-                            db.add_tokens(&[token.clone()]).unwrap();
-                            token
-                        },
-                        None => continue,
-                    }
-                },
-                _ => continue,
-            };
             println!("token found: ");
+            let decimals = tx.outputs.iter()
+                .map(|output| output.value_token_base.decimals())
+                .next();
             let output_sum = tx.outputs.iter()
-                .map(|output| output.value_token_base as u128)
-                .sum::<u128>();
+                .map(|output| output.value_token_base)
+                .sum::<SLPAmount>();
             let input_sum = tx.inputs.iter()
                 .filter_map(|input| Some((input, validity_map.get(&input.output_tx)?)))
                 .filter(|(tx_input, validity)|
@@ -411,9 +429,9 @@ impl TxHistory {
                     validity.slp.detail.outputs.get((tx_input.output_idx - 1) as usize)
                 )
                 .filter_map(|slp_output: &tx_result::TxSLPOutput| {
-                    Some(Token::parse_amount(token.decimals as u32, &slp_output.amount)? as u128)
+                    Some(SLPAmount::from_str_decimals(&slp_output.amount, decimals?).ok()?)
                 })
-                .sum::<u128>();
+                .sum::<SLPAmount>();
             println!("input sum: {}", input_sum);
             println!("output sum: {}", output_sum);
             if input_sum >= output_sum {
@@ -436,9 +454,7 @@ impl TxHistory {
 
 struct _Price {
     script_price: u32,
-    approx_price_per_token: f64,
-    price_per_token_numer: i64,
-    price_per_token_denom: i64,
+    price_per_token: Rational,
     power: u8,
     is_inverted: bool,
 }
@@ -462,11 +478,6 @@ impl TradeOffer {
         let script_price = io::Cursor::new(price_bytes).read_u32::<BigEndian>().ok()?;
         let factor = Self::_FACTORS[slp_decimals as usize];
         let factor_rational = rug::Rational::from((factor, 1));
-        let approx_price_per_token = if is_inverted {
-            (1.0 / (script_price as f64)) * (factor as f64)
-        } else {
-            (script_price as f64) * (factor as f64)
-        };
         let price_per_token = if is_inverted {
             rug::Rational::from((1, script_price)) * factor_rational
         } else {
@@ -474,9 +485,7 @@ impl TradeOffer {
         };
         Some(_Price {
             script_price,
-            approx_price_per_token,
-            price_per_token_numer: price_per_token.numer().to_i128()? as i64,
-            price_per_token_denom: price_per_token.denom().to_i128()? as i64,
+            price_per_token,
             power: *power_bytes.get(0)?,
             is_inverted,
         })
@@ -486,7 +495,7 @@ impl TradeOffer {
                       price: &_Price,
                       tx_type: &TxType,
                       config: &SLPDEXConfig,
-                      receiving_address: &cashcontracts::Address) -> Option<u64> {
+                      receiving_address: &cashcontracts::Address) -> Option<SLPAmount> {
         let (token_hash, token_type, slp_type) = match tx_type {
             TxType::SLP {token_hash, token_type, slp_type} => (token_hash, *token_type, slp_type),
             TxType::Default => return None,
@@ -502,7 +511,7 @@ impl TradeOffer {
                     is_inverted: price.is_inverted,
                     token_id: token_hash.clone(),
                     token_type: token_type as u8,
-                    sell_amount_token: output.value_token_base,
+                    sell_amount_token: output.value_token_base.base_amount() as u64,
                     price: price.script_price,
                     dust_amount: config.dust_limit,
                     address: receiving_address.clone(),
@@ -521,7 +530,10 @@ impl TradeOffer {
         }
     }
 
-    pub fn from_entry(tx: &HistoricTx, entry: &tx_result::TxEntry, config: &SLPDEXConfig)
+    pub fn from_entry(tx: &HistoricTx,
+                      entry: &tx_result::TxEntry,
+                      config: &SLPDEXConfig,
+                      decimals: u32)
             -> Option<Self> {
         entry.inputs.iter().enumerate().find_map(|(i, input)| {
             if input.b0 == tx_result::StackItem::Str(base64::encode("EXCH")) &&
@@ -553,13 +565,12 @@ impl TradeOffer {
                     output_idx: contract_vals.map(|(idx, _)| idx),
                     input_tx: cashcontracts::tx_hex_to_hash(&input.e.h),
                     input_idx: input.e.i,
-                    approx_price_per_token: price.approx_price_per_token,
-                    price_per_token_numer: price.price_per_token_numer,
-                    price_per_token_denom: price.price_per_token_denom,
+                    price_per_token: price.price_per_token,
+                    is_inverted: price.is_inverted,
                     script_price: price.script_price as i64,
                     sell_amount_token_base: contract_vals
                         .map(|(_, amount)| amount)
-                        .unwrap_or(0) as i64,
+                        .unwrap_or(SLPAmount::new(0, decimals)),
                     receiving_address,
                 })
             } else {
@@ -609,13 +620,12 @@ impl TradeOffer {
                         output_idx: contract_vals.map(|(idx, _)| idx),
                         input_tx: input.outpoint.tx_hash.clone(),
                         input_idx: input.outpoint.vout as i32,
-                        approx_price_per_token: price.approx_price_per_token,
-                        price_per_token_numer: price.price_per_token_numer,
-                        price_per_token_denom: price.price_per_token_denom,
+                        price_per_token: price.price_per_token,
+                        is_inverted: price.is_inverted,
                         script_price: price.script_price as i64,
                         sell_amount_token_base: contract_vals
                             .map(|(_, amount)| amount)
-                            .unwrap_or(0) as i64,
+                            .unwrap_or(SLPAmount::new(0, token.decimals as u32)),
                         receiving_address,
                     })
                 }
