@@ -1,6 +1,7 @@
 use diesel::prelude::*;
 use crate::schema::*;
 use crate::block::BlockHeader;
+use diesel::data_types::PgNumeric;
 
 #[derive(Queryable)]
 #[derive(Insertable)]
@@ -27,8 +28,8 @@ pub struct Token {
     pub symbol:               Option<String>, // VARCHAR(200),
     pub name:                 Option<String>, // VARCHAR(200),
     pub document_hash:        Option<String>, // VARCHAR(200),
-    pub initial_supply:       i64,    // BIGINT NOT NULL,
-    pub current_supply:       i64,    // BIGINT NOT NULL,
+    pub initial_supply:       PgNumeric, // NUMERIC(52, 26) NOT NULL,
+    pub current_supply:       PgNumeric, // NUMERIC(52, 26) NOT NULL,
     pub block_created_height: i32,    // INT NOT NULL
 }
 
@@ -43,8 +44,8 @@ pub struct NewToken {
     pub symbol:               Option<String>, // VARCHAR(200),
     pub name:                 Option<String>, // VARCHAR(200),
     pub document_hash:        Option<String>, // VARCHAR(200),
-    pub initial_supply:       i64,    // BIGINT NOT NULL,
-    pub current_supply:       i64,    // BIGINT NOT NULL,
+    pub initial_supply:       PgNumeric, // NUMERIC(52, 26) NOT NULL,
+    pub current_supply:       PgNumeric, // NUMERIC(52, 26) NOT NULL,
     pub block_created_height: i32,    // INT NOT NULL
 }
 
@@ -83,7 +84,7 @@ pub struct TxOutput {
     pub tx:               i64, // BIGINT REFERENCES tx (id) ON DELETE CASCADE,
     pub idx:              i32, // INT NOT NULL,
     pub value_satoshis:   i64, // BIGINT NOT NULL,
-    pub value_token_base: i64, // BIGINT NOT NULL,
+    pub value_token_base: PgNumeric, // NUMERIC(52, 26) NOT NULL,
     pub address:          Option<Vec<u8>>, // BYTEA,
     pub output_type:      i32, // INT NOT NULL,
 }
@@ -101,18 +102,17 @@ pub struct TxInput {
 
 #[derive(Queryable)]
 pub struct TradeOffer {
-    pub id:                          i64, // SERIAL PRIMARY KEY,
-    pub tx:                          i64, // BIGINT REFERENCES tx (id) ON DELETE CASCADE,
-    pub output_idx:                  Option<i32>, // INT NOT NULL,
-    pub input_tx:                    Vec<u8>, // BYTEA NOT NULL,
-    pub input_idx:                   i32, // INT NOT NULL,
-    pub approx_price_per_token:      f64, // DOUBLE PRECISION NOT NULL,
-    pub price_per_token_nominator:   i64, // BIGINT NOT NULL,
-    pub price_per_token_denominator: i64, // BIGINT NOT NULL,
-    pub script_price:                i64, // BIGINT NOT NULL,
-    pub sell_amount_token_base:      i64, // INT NOT NULL,
-    pub receiving_address:           Vec<u8>, // BYTEA NOT NULL,
-    pub spent:                       bool, // BOOL NOT NULL
+    pub id:                     i64, // SERIAL PRIMARY KEY,
+    pub tx:                     i64, // BIGINT REFERENCES tx (id) ON DELETE CASCADE,
+    pub output_idx:             Option<i32>, // INT NOT NULL,
+    pub input_tx:               Vec<u8>, // BYTEA NOT NULL,
+    pub input_idx:              i32, // INT NOT NULL,
+    pub price_per_token:        PgNumeric, // NUMERIC(52, 26) NOT NULL,
+    pub script_price:           i64, // BIGINT NOT NULL,
+    pub is_inverted:            bool, // BOOL NOT NULL,
+    pub sell_amount_token_base: PgNumeric, // NUMERIC(26) NOT NULL,
+    pub receiving_address:      Vec<u8>, // BYTEA NOT NULL,
+    pub spent:                  bool, // BOOL NOT NULL
 }
 
 #[derive(Insertable)]
@@ -122,11 +122,10 @@ pub struct NewTradeOffer {
     pub output_idx:             Option<i32>, // INT NOT NULL,
     pub input_tx:               Vec<u8>, // BYTEA NOT NULL,
     pub input_idx:              i32, // INT NOT NULL,
-    pub approx_price_per_token: f64, // DOUBLE PRECISION NOT NULL,
-    pub price_per_token_numer:  i64, // BIGINT NOT NULL,
-    pub price_per_token_denom:  i64, // BIGINT NOT NULL,
+    pub price_per_token:        PgNumeric, // NUMERIC(52, 26) NOT NULL,
     pub script_price:           i64, // BIGINT NOT NULL,
-    pub sell_amount_token_base: i64, // INT NOT NULL,
+    pub is_inverted:            bool, // BOOL NOT NULL,
+    pub sell_amount_token_base: PgNumeric, // NUMERIC(26) NOT NULL,
     pub receiving_address:      Vec<u8>, // BYTEA NOT NULL
 }
 
