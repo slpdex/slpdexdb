@@ -21,6 +21,10 @@ mod update_history;
 mod endpoint;
 mod token_source;
 mod token;
+mod get_data_message;
+mod tx_message;
+mod convert_numeric;
+mod slp_amount;
 
 mod models;
 mod schema;
