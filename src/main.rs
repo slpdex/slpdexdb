@@ -1,7 +1,11 @@
+#![recursion_limit="1024"]
+
 #[macro_use]
 extern crate diesel;
 #[macro_use]
 extern crate num_derive;
+#[macro_use]
+extern crate error_chain;
 
 mod block;
 mod message_error;
@@ -26,6 +30,7 @@ mod tx_message;
 mod convert_numeric;
 mod slp_amount;
 
+mod errors;
 mod models;
 mod schema;
 
