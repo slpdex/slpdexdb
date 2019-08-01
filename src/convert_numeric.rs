@@ -1,12 +1,13 @@
+use crate::errors::{Result, ErrorKind, NumericError};
 use diesel::data_types::PgNumeric;
 use rug::{Rational, Integer, ops::Pow};
 use std::{fmt, fmt::{Formatter, Display}};
 
-pub fn pg_numeric_to_rational(numeric: &PgNumeric) -> Option<Rational> {
+pub fn pg_numeric_to_rational(numeric: &PgNumeric) -> Result<Rational> {
     let (is_signed, weight, digits) = match *numeric {
         PgNumeric::Positive { weight, ref digits, .. } => (false, weight, digits),
         PgNumeric::Negative { weight, ref digits, .. } => (true, weight, digits),
-        PgNumeric::NaN => { return None },
+        PgNumeric::NaN => { return Err(ErrorKind::NumericError(NumericError::NaN).into()) },
     };
     let ten = Rational::from(10u8);
     let ten_thousand = Integer::from(10_000u16);
@@ -23,14 +24,14 @@ pub fn pg_numeric_to_rational(numeric: &PgNumeric) -> Option<Rational> {
     let correction_exp = 4 * ((weight as i32) - count + 1);
     let factor = ten.pow(-correction_exp);
     let result = Rational::from(result) * factor;
-    Some(result)
+    Ok(result)
 }
 
-pub fn pg_numeric_to_i128(numeric: &PgNumeric) -> Option<i128> {
+pub fn pg_numeric_to_i128(numeric: &PgNumeric) -> Result<i128> {
     let (is_signed, weight, digits) = match *numeric {
         PgNumeric::Positive {weight, ref digits, ..} => (false, weight, digits),
         PgNumeric::Negative {weight, ref digits, ..} => (true, weight, digits),
-        PgNumeric::NaN => { return None },
+        PgNumeric::NaN => { return Err(ErrorKind::NumericError(NumericError::NaN).into()) },
     };
     let mut result = 0i128;
     for digit in digits {
@@ -40,8 +41,10 @@ pub fn pg_numeric_to_i128(numeric: &PgNumeric) -> Option<i128> {
     if is_signed { result *= -1; }
     let count = digits.len() as i32;
     let correction_exp = 4 * ((weight as i32) - count + 1);
-    if correction_exp < 0 { return None; }
-    Some(result * (10i128).pow(correction_exp as u32))
+    if correction_exp < 0 {
+        return Err(ErrorKind::NumericError(NumericError::NotInteger(numeric.clone())).into());
+    }
+    Ok(result * (10i128).pow(correction_exp as u32))
 }
 
 pub fn i128_to_pg_numeric(mut val: i128) -> PgNumeric {
@@ -109,12 +112,12 @@ pub fn rational_to_pg_numeric(rational: Rational, scale: u16) -> PgNumeric {
 pub struct PrettyRational(pub Rational);
 
 impl Display for PrettyRational {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         fmt_rational(self.0.clone(), f)
     }
 }
 
-fn fmt_rational(rational: Rational, f: &mut Formatter) -> Result<(), fmt::Error> {
+fn fmt_rational(rational: Rational, f: &mut Formatter) -> fmt::Result {
     let zero = Rational::from(0);
     let ten = Rational::from(10u8);
     let is_nonnegative = rational >= zero;

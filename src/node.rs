@@ -13,6 +13,8 @@ use crate::tx_history::TxHistory;
 use crate::tx_source::TxSource;
 use crate::db::Db;
 use crate::config::SLPDEXConfig;
+use crate::errors::Result;
+
 
 use cashcontracts::tx_hash_to_hex;
 
@@ -58,8 +60,8 @@ impl Node {
         Ok(())
     }
 
-    fn request_get_headers(db: &Db, connection: &mut TcpStream) -> io::Result<()> {
-        let hash = match db.header_tip().unwrap() {  // TODO: handle error
+    fn request_get_headers(db: &Db, connection: &mut TcpStream) -> Result<()> {
+        let hash = match db.header_tip()? {
             Some((header, _)) => header.hash(),
             None => {
                 db.add_headers(&[crate::block::GENESIS.clone()]).unwrap();
@@ -74,7 +76,7 @@ impl Node {
         Ok(())
     }
 
-    fn handle_message(db: &Db, connection: &mut TcpStream, msg: &Message, config: &SLPDEXConfig) -> io::Result<()> {
+    fn handle_message(db: &Db, connection: &mut TcpStream, msg: &Message, config: &SLPDEXConfig) -> Result<()> {
         match msg.header().command_name() {
             b"verack" => {
                 VerackMessage.message().write_to_stream(connection)?;
@@ -100,7 +102,7 @@ impl Node {
                 for header in headers.headers.iter() {
                     println!("new header: {}", header);
                 }
-                db.add_headers(&headers.headers).unwrap();
+                db.add_headers(&headers.headers)?;
                 Self::request_get_headers(db, connection)?;
             },
             b"tx" => {
@@ -114,7 +116,7 @@ impl Node {
                         _ => {},
                     };
                 });
-                tx_history.validate_slp(&TxSource::new(), db, config);
+                tx_history.validate_slp(&TxSource::new(), db, config)?;
                 tx_history.txs.iter().for_each(|tx| {
                     match &tx.tx_type {
                         crate::tx_history::TxType::SLP {token_hash, ..} => println!("valid SLP token={}", hex::encode(token_hash)),
@@ -130,7 +132,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn run_forever(&mut self) -> io::Result<()> {
+    pub fn run_forever(&mut self) -> Result<()> {
         let connection = &mut self.connections[0];
         Self::send_version(connection)?;
         loop {

@@ -3,6 +3,7 @@ use crate::config::SLPDEXConfig;
 use crate::token::Token;
 use crate::db::Db;
 use crate::slp_amount::SLPAmount;
+use crate::errors::{Result, Error, ErrorKind, SLPError, TokenError, TradeOfferError};
 use byteorder::{BigEndian, ReadBytesExt};
 use std::io;
 use std::collections::{HashSet, HashMap};
@@ -252,14 +253,36 @@ impl TxHistory {
     }
 
     pub fn _process_slp_output(script: &cashcontracts::Script, db: &Db)
-            -> Option<(TxType, Vec<SLPAmount>, Token)> {
+            -> Result<Option<(TxType, Vec<SLPAmount>, Token)>> {
         use cashcontracts::{Op::*, OpCodeType::*, serialize};
-        if !script.is_slp_safe() { return None; }
+        let script_hex = || hex::encode(script.to_vec());
         let ops = script.ops();
-        if ops.len() < 6 { return None; }
+        match ops.get(1) {
+            Some(Push(lokad_id)) if lokad_id != b"SLP\0" => {},
+            _ => return Ok(None),
+        }
+        if ops.len() < 6 {
+            return Err(ErrorKind::InvalidSLPOutput(script_hex(),
+                                                   SLPError::TooFewPushops(ops.len())).into());
+        }
+        if !script.is_slp_safe() {
+            return Err(ErrorKind::InvalidSLPOutput(script_hex(),
+                                                   SLPError::NotSLPSafe).into());
+        }
         match (&ops[0], &ops[1], &ops[2], &ops[3], &ops[4]) {
-            (Code(OpReturn), Push(lokad_id), Push(token_type), Push(tx_type), Push(token_id))
-                    if lokad_id == b"SLP\0" && token_type.len() <= 2 && token_id.len() == 32 => {
+            (Code(OpReturn), Push(_), Push(token_type), Push(tx_type), Push(token_id)) => {
+                if token_type.len() > 2 || token_type.len() == 0 {
+                    return Err(ErrorKind::InvalidSLPOutput(
+                        script_hex(),
+                        SLPError::InvalidTokenTypeLength(hex::encode(token_type)),
+                    ).into());
+                }
+                if token_id.len() == 32 {
+                    return Err(ErrorKind::InvalidSLPOutput(
+                        script_hex(),
+                        SLPError::InvalidTokenHashLength(hex::encode(token_id))
+                    ).into())
+                }
                 let mut token_hash = [0; 32];
                 token_hash.copy_from_slice(token_id);
                 let token = Self::_fetch_token(&token_hash, db)?;
@@ -268,23 +291,38 @@ impl TxHistory {
                 let amounts = ops[5..].iter()
                     .map(|op| {
                         match op {
-                            Push(vec) => Some(SLPAmount::from_slice(&vec, decimals).ok()?),
-                            _ => None,
+                            Push(vec) => Ok(SLPAmount::from_slice(&vec, decimals)?),
+                            _ => unreachable!(),  // handled by is_slp_safe
                         }
                     })
-                    .collect::<Option<Vec<_>>>()?;
-                if amounts.len() > 19 { return None }
-                Some((
+                    .collect::<Result<Vec<_>>>()?;
+                if amounts.len() > 19 {
+                    return Err(ErrorKind::InvalidSLPOutput(
+                        hex::encode(script.to_vec()),
+                        SLPError::TooManyAmounts(amounts.len()),
+                    ).into())
+                }
+                Ok(Some((
                     TxType::SLP {
-                        slp_type: SLPTxType::from_bytes(tx_type)?,
+                        slp_type: SLPTxType::from_bytes(tx_type)
+                            .ok_or_else(|| ErrorKind::InvalidSLPOutput(
+                                script_hex(),
+                                SLPError::InvalidSLPType(
+                                    format!(
+                                        "{} ({})",
+                                        String::from_utf8_lossy(tx_type),
+                                        hex::encode(tx_type),
+                                    )
+                                )
+                            ))?,
                         token_type,
                         token_hash,
                     },
                     amounts,
                     token,
-                ))
+                )))
             },
-            _ => { None }
+            _ => { Err(ErrorKind::InvalidSLPOutput(script_hex(), SLPError::NoMatch).into()) }
         }
     }
 
@@ -304,9 +342,16 @@ impl TxHistory {
             let (tx_type, slp_amounts, token) = tx.outputs()
                 .get(0)
                 .and_then(|output| {
-                    let (tx_type, slp_amounts, token) =
-                        Self::_process_slp_output(&output.script, db)?;
-                    Some((tx_type, slp_amounts, Some(token)))
+                    match Self::_process_slp_output(&output.script, db) {
+                        Ok(slp_output) => slp_output,
+                        Err(err) => {
+                            eprintln!("Invalid SLP output: {}", err);
+                            None
+                        },
+                    }
+                })
+                .map(|(tx_type, slp_amounts, token)| {
+                    (tx_type, slp_amounts, Some(token))
                 })
                 .unwrap_or((TxType::Default, vec![], None));
             let outputs = tx.outputs().iter().enumerate()
@@ -357,25 +402,28 @@ impl TxHistory {
         }
     }
 
-    pub fn _fetch_token(token_hash: &[u8; 32], db: &Db) -> Option<Token> {
-        match db.token(token_hash) {
-            Ok(Some(token)) => Some(token),
-            Ok(None) => {
+    pub fn _fetch_token(token_hash: &[u8; 32], db: &Db) -> Result<Token> {
+        match db.token(token_hash)? {
+            Some(token) => Ok(token),
+            None => {
                 let mut token_entries = crate::token_source::TokenSource::new()
-                    .request_tokens(&[TxFilter::TokenId(token_hash.clone())]).ok()?;
+                    .request_tokens(&[TxFilter::TokenId(token_hash.clone())])?;
                 println!("token entry: {:?}", token_entries);
-                if token_entries.len() == 0 { return None }
+                if token_entries.len() == 0 {
+                    return Err(
+                        ErrorKind::TokenError(TokenError::UnknownTokenId(hex::encode(token_hash))).into()
+                    )
+                }
                 let token = Token::from_entry(token_entries.remove(0))?;
                 println!("new token: {:?}", token);
-                db.add_tokens(&[token.clone()]).unwrap();
-                Some(token)
+                db.add_tokens(&[token.clone()])?;
+                Ok(token)
             },
-            _ => None,
         }
     }
 
     pub fn validate_slp(&mut self, tx_source: &TxSource, _db: &Db, config: &SLPDEXConfig)
-            -> reqwest::Result<()> {
+            -> Result<()> {
         let tx_to_check = self.txs.iter()
             .flat_map(|tx| {
                 tx.inputs.iter()
@@ -474,20 +522,31 @@ impl TradeOffer {
         1_000_000_000,
     ];
 
-    fn _decode_price(slp_decimals: i32, power_bytes: &[u8], price_bytes: &[u8]) -> Option<_Price> {
+    fn _decode_price(slp_decimals: i32, power_bytes: &[u8], price_bytes: &[u8]) -> Result<_Price> {
         let is_inverted = power_bytes.get(1) == Some(&1);
-        let script_price = io::Cursor::new(price_bytes).read_u32::<BigEndian>().ok()?;
+        let script_price = io::Cursor::new(price_bytes)
+            .read_u32::<BigEndian>()
+            .map_err(|_| Error::from(ErrorKind::InvalidTradeOffer(
+                TradeOfferError::InvalidPrice(price_bytes.to_vec())
+            )))?;
         let factor = Self::_FACTORS[slp_decimals as usize];
         let factor_rational = rug::Rational::from((factor, 1));
         let price_per_token = if is_inverted {
+            if script_price == 0 {
+                return Err(ErrorKind::InvalidTradeOffer(
+                    TradeOfferError::InvalidPrice(price_bytes.to_vec())
+                ).into())
+            }
             rug::Rational::from((1, script_price)) * factor_rational
         } else {
             rug::Rational::from((script_price, 1)) * factor_rational
         };
-        Some(_Price {
+        Ok(_Price {
             script_price,
             price_per_token,
-            power: *power_bytes.get(0)?,
+            power: *power_bytes.get(0).ok_or_else(|| ErrorKind::InvalidTradeOffer(
+                TradeOfferError::InvalidPower(power_bytes.to_vec()),
+            ))?,
             is_inverted,
         })
     }
@@ -540,11 +599,15 @@ impl TradeOffer {
             if input.b0 == tx_result::StackItem::Str(base64::encode("EXCH")) &&
                     input.b1 == (tx_result::StackItem::Op {op: 0x52}) {
                 let price = entry.slp.as_ref()
-                    .and_then(|slp| Self::_decode_price(
-                        slp.detail.decimals,
-                        &base64::decode(input.b2.get_str()?).ok()?,
-                        &base64::decode(input.b3.get_str()?).ok()?,
-                    ))?;
+                    .and_then(|slp| {
+                        Self::_decode_price(
+                            slp.detail.decimals,
+                            &base64::decode(input.b2.get_str()?).ok()?,
+                            &base64::decode(input.b3.get_str()?).ok()?,
+                        ).map_err(|err| {
+                            eprintln!("Trade offer error {}", err);
+                        }).ok()
+                    })?;
                 let receiving_address = Address::from_slice(
                     AddressType::P2PKH,
                     &base64::decode(input.b4.get_str()?).ok()?,
@@ -596,7 +659,10 @@ impl TradeOffer {
             match &input.script.ops()[..5] {
                 &[Push(ref exch), Code(Op2), Push(ref power), Push(ref price), Push(ref address)]
                         if exch.as_slice() == config.exch_lokad.as_bytes() => {
-                    let price = Self::_decode_price(token.decimals, power, price)?;
+                    let price = Self::_decode_price(token.decimals, power, price)
+                        .map_err(|err| {
+                            eprintln!("Trade offer error {}", err);
+                        }).ok()?;
                     println!("succeed price decoding");
                     let receiving_address = Address::from_slice(
                         AddressType::P2PKH,

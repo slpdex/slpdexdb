@@ -1,5 +1,6 @@
 use crate::token_source::token_result::TokenEntry;
 use crate::slp_amount::SLPAmount;
+use crate::errors::{Result, ErrorKind, Error, TokenError};
 
 #[derive(Clone, Debug)]
 pub struct Token {
@@ -21,15 +22,21 @@ impl Token {
         if string.is_empty() { None } else { Some(string) }
     }
 
-    pub fn from_entry(token_entry: TokenEntry) -> Option<Self> {
-        Some(Token {
+    pub fn from_entry(token_entry: TokenEntry) -> Result<Self> {
+        let not_mined_yet_err = || -> Error {
+            ErrorKind::TokenError(
+                TokenError::TokenNotMinedYet(token_entry.token_details.token_id_hex.clone())
+            ).into()
+        };
+        Ok(Token {
             hash: {
                 let mut hash = [0; 32];
-                hash.copy_from_slice(&hex::decode(&token_entry.token_details.token_id_hex).ok()?);
+                hash.copy_from_slice(&hex::decode(&token_entry.token_details.token_id_hex)?);
                 hash
             },
             decimals: token_entry.token_details.decimals,
-            timestamp: token_entry.token_details.timestamp_unix?,
+            timestamp: token_entry.token_details.timestamp_unix.ok_or_else(not_mined_yet_err)?,
+            block_created_height: token_entry.token_stats.block_created.ok_or_else(not_mined_yet_err)?,
             version_type: token_entry.token_details.version_type,
             document_uri: Self::str_or_empty(token_entry.token_details.document_uri),
             symbol: Self::str_or_empty(token_entry.token_details.symbol),
@@ -39,12 +46,11 @@ impl Token {
             initial_supply: SLPAmount::from_str_decimals(
                 &token_entry.token_details.genesis_or_mint_quantity,
                 token_entry.token_details.decimals as u32,
-            ).ok()?,
+            )?,
             current_supply: SLPAmount::from_str_decimals(
                 &token_entry.token_stats.qty_token_circulating_supply,
                 token_entry.token_details.decimals as u32,
-            ).ok()?,
-            block_created_height: token_entry.token_stats.block_created?,
+            )?,
         })
     }
 }

@@ -1,12 +1,13 @@
-use std::num::ParseIntError;
 use std::ops::{Add, Sub, Mul, Div, AddAssign, SubAssign, MulAssign, DivAssign};
 use std::iter::Sum;
 use std::io::{Cursor, self};
 use std::cmp::Ordering;
 use diesel::data_types::PgNumeric;
-use crate::convert_numeric::{i128_to_pg_numeric, pg_numeric_to_i128};
 use std::{fmt, fmt::{Formatter, Display}};
 use byteorder::{BigEndian, ReadBytesExt};
+
+use crate::convert_numeric::{i128_to_pg_numeric, pg_numeric_to_i128};
+use crate::errors::{Result, ErrorKind, NumericError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SLPAmount {
@@ -15,7 +16,7 @@ pub struct SLPAmount {
 }
 
 impl SLPAmount {
-    pub fn from_str_decimals(s: &str, decimals: u32) -> Result<Self, ParseIntError> {
+    pub fn from_str_decimals(s: &str, decimals: u32) -> Result<Self> {
         let factor: i128 = (10i128).pow(decimals);
         let base_amount = match s.find(".") {
             Some(dot_idx) => {
@@ -24,11 +25,11 @@ impl SLPAmount {
                 let preceding_zeros = fract_part_str.chars()
                     .take_while(|c| *c == '0')
                     .count();
-                let fract_part_str = if fract_part_str.len() > decimals as usize {
-                    &fract_part_str[..decimals as usize]
-                } else {
-                    fract_part_str
-                };
+                if fract_part_str.len() > decimals as usize {
+                    return Err(
+                        ErrorKind::NumericError(NumericError::TooManyDigits(s.to_string())).into()
+                    );
+                }
                 let num_decimals = fract_part_str.len() as u32;
                 let fract_part_str = &fract_part_str[preceding_zeros..];
                 if fract_part_str.len() == 0 {
@@ -193,7 +194,7 @@ impl Sum for SLPAmount {
 }
 
 impl Display for SLPAmount {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if self.decimals == 0 {
             f.pad_integral(self.base_amount >= 0, "", &self.base_amount.to_string())?;
             return Ok(())
