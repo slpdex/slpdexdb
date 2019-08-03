@@ -1,5 +1,6 @@
 use std::io;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use bytes::{BufMut, BytesMut};
 
 use crate::message_error::MessageError;
 
@@ -12,6 +13,7 @@ pub struct MessageHeader {
 }
 
 pub const MESSAGE_MAGIC: &[u8] = b"\xe3\xe1\xf3\xe8";
+pub const HEADER_SIZE: usize = 4 + 12 + 4 + 4;
 
 impl MessageHeader {
     pub fn new(command: [u8; 12],
@@ -46,6 +48,13 @@ impl MessageHeader {
         write.write_u32::<LittleEndian>(self.payload_size)?;
         write.write(&self.checksum)?;
         Ok(())
+    }
+
+    pub fn write_to_bytes(&self, bytes: &mut BytesMut) {
+        bytes.put(MESSAGE_MAGIC);
+        bytes.put(self.command.as_ref());
+        bytes.put_u32_le(self.payload_size);
+        bytes.put(self.checksum.as_ref());
     }
 
     pub fn command(&self) -> &[u8; 12] {

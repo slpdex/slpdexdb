@@ -40,6 +40,7 @@ error_chain! {
         Request(reqwest::Error);
         ParseInt(std::num::ParseIntError);
         FromHex(hex::FromHexError);
+        Mailbox(actix::MailboxError);
     }
 
     errors {

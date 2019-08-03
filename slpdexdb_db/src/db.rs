@@ -1,13 +1,13 @@
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 
-use crate::block::BlockHeader;
+use slpdexdb_base::BlockHeader;
+use slpdexdb_base::SLPAmount;
+use slpdexdb_base::convert_numeric::rational_to_pg_numeric;
 use crate::tx_history::{TxHistory, TxType};
 use crate::update_history::{UpdateHistory, UpdateSubjectType};
 use crate::token::Token;
 use crate::{models, schema::*};
-use crate::slp_amount::SLPAmount;
-use crate::convert_numeric::rational_to_pg_numeric;
 
 use std::collections::{HashMap, HashSet, BTreeSet};
 

@@ -1,9 +1,7 @@
 use crate::tx_source::{tx_result, TxSource, TxFilter};
-use crate::config::SLPDEXConfig;
+use slpdexdb_base::{SLPDEXConfig, SLPAmount, Result, Error, ErrorKind, SLPError, TokenError, TradeOfferError};
 use crate::token::Token;
 use crate::db::Db;
-use crate::slp_amount::SLPAmount;
-use crate::errors::{Result, Error, ErrorKind, SLPError, TokenError, TradeOfferError};
 use byteorder::{BigEndian, ReadBytesExt};
 use std::io;
 use std::collections::{HashSet, HashMap};
@@ -649,10 +647,9 @@ impl TradeOffer {
                    token: &Token) -> Option<Self> {
         use cashcontracts::{Op::*, OpCodeType::*};
         println!("validating trade offer");
-        let (token_hash, token_type) = match &historic_tx.tx_type {
-            TxType::SLP {token_hash, token_type, ..} => (token_hash, *token_type),
-            TxType::Default => return { println!("isnt slp"); None },
-        };
+        if let TxType::Default = &historic_tx.tx_type {
+            return None
+        }
         tx.inputs().iter().find_map(|input| {
             let ops = input.script.ops();
             if ops.len() < 5 { return None; }

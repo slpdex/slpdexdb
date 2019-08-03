@@ -1,6 +1,6 @@
 use crate::token_source::token_result::TokenEntry;
-use crate::slp_amount::SLPAmount;
-use crate::errors::{Result, ErrorKind, Error, TokenError};
+use slpdexdb_base::SLPAmount;
+use slpdexdb_base::{Result, ErrorKind, Error, TokenError};
 
 #[derive(Clone, Debug)]
 pub struct Token {

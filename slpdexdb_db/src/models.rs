@@ -1,6 +1,5 @@
-use diesel::prelude::*;
 use crate::schema::*;
-use crate::block::BlockHeader;
+use slpdexdb_base::BlockHeader;
 use diesel::data_types::PgNumeric;
 
 #[derive(Queryable)]
@@ -151,6 +150,21 @@ pub struct NewUpdateHistory {
     pub subject_hash:    Option<Vec<u8>>, // BYTEA NOT NULL,
     pub completed:       bool, // BOOL NOT NULL
 }
+
+/*#[derive(Queryable)]
+pub struct Utxo {
+    pub tx:          i64, // BIGINT NOT NULL,
+    pub idx:         i32, // INT NOT NULL,
+}
+
+#[derive(Queryable)]
+pub struct UtxoView {
+    pub tx:          i64,
+    pub idx:         i32,
+    pub address:     Option<Vec<u8>>,
+    pub trade_offer: Option<i32>,
+}*/
+
 
 impl Block {
     pub fn from_block_header(header: &BlockHeader, height: i32) -> Block {

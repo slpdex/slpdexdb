@@ -1,15 +1,19 @@
-use crate::message::Message;
+use crate::message_packet::MessagePacket;
+use crate::message::NodeMessage;
 use cashcontracts::serialize::{read_var_int, write_var_int};
 use cashcontracts::tx_hash_to_hex;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::{io, io::{Write, Read}};
+use std::io::{self, Write};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ObjectType {
+    #[allow(dead_code)]
     Error = 0,
     Tx = 1,
     Block = 2,
+    #[allow(dead_code)]
     FilteredBlock = 3,
+    #[allow(dead_code)]
     CmpctBlock = 4,
 }
 
@@ -24,33 +28,32 @@ pub struct InvMessage {
     pub inv_vectors: Vec<InvVector>,
 }
 
-impl InvMessage {
-    pub fn command() -> &'static [u8] {
+impl NodeMessage for InvMessage {
+    fn command() -> &'static [u8] {
         b"inv"
     }
 
-    pub fn message(&self) -> Message {
+    fn packet(&self) -> MessagePacket {
         let mut payload = Vec::new();
         write_var_int(&mut payload, self.inv_vectors.len() as u64).unwrap();
         for inv_vector in self.inv_vectors.iter() {
             payload.write_u32::<LittleEndian>(inv_vector.type_id as u32).unwrap();
             payload.write(&inv_vector.hash).unwrap();
         }
-        Message::from_payload(Self::command(), payload)
+        MessagePacket::from_payload(Self::command(), payload)
     }
 
-    pub fn from_payload(payload: &[u8]) -> io::Result<InvMessage> {
-        let mut cur = io::Cursor::new(payload);
-        let n_inv = read_var_int(&mut cur)?;
+    fn from_stream(stream: &mut impl io::Read) -> io::Result<Self> {
+        let n_inv = read_var_int(stream)?;
         let mut inv_vectors = Vec::new();
         for _ in 0..n_inv {
-            let type_id = match cur.read_u32::<LittleEndian>()? {
+            let type_id = match stream.read_u32::<LittleEndian>()? {
                 1 => ObjectType::Tx,
                 2 => ObjectType::Block,
                 _ => continue,
             };
             let mut hash = [0; 32];
-            cur.read_exact(&mut hash)?;
+            stream.read_exact(&mut hash)?;
             inv_vectors.push(InvVector { type_id, hash });
         }
         Ok(InvMessage {inv_vectors})

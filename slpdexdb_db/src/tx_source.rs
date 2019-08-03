@@ -1,6 +1,6 @@
 use cashcontracts::Address;
 use json::{JsonValue, object, array};
-use crate::config::SLPDEXConfig;
+use slpdexdb_base::SLPDEXConfig;
 use crate::endpoint::Endpoint;
 
 

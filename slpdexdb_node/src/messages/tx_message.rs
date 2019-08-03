@@ -1,4 +1,5 @@
-use crate::message::Message;
+use crate::message_packet::MessagePacket;
+use crate::message::NodeMessage;
 use cashcontracts::Tx;
 use std::io;
 
@@ -7,20 +8,19 @@ pub struct TxMessage {
     pub tx: Tx,
 }
 
-impl TxMessage {
-    pub fn command() -> &'static [u8] {
+impl NodeMessage for TxMessage {
+    fn command() -> &'static [u8] {
         b"tx"
     }
 
-    pub fn message(&self) -> Message {
+    fn packet(&self) -> MessagePacket {
         let mut payload = Vec::new();
         self.tx.write_to_stream(&mut payload).unwrap();
-        Message::from_payload(Self::command(), payload)
+        MessagePacket::from_payload(Self::command(), payload)
     }
 
-    pub fn from_payload(payload: &[u8]) -> io::Result<Self> {
-        let mut cur = io::Cursor::new(payload);
-        Ok(TxMessage {tx: Tx::read_from_stream(&mut cur)? })
+    fn from_stream(stream: &mut impl io::Read) -> io::Result<Self> {
+        Ok(TxMessage {tx: Tx::read_from_stream(stream)? })
     }
 }
 
