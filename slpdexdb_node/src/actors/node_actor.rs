@@ -8,10 +8,11 @@ use std::sync::Arc;
 
 use crate::codec::MessageCodec;
 use crate::message::NodeMessage;
-use crate::messages::{VersionMessage, VerackMessage, InvMessage};
+use crate::messages::{VersionMessage, VerackMessage, InvMessage, HeadersMessage};
 use crate::message_packet::MessagePacket;
-use crate::actors::{VersionActor, InvActor};
+use crate::actors::{VersionActor, InvActor, BlockHeaderActor};
 use crate::msg::{Subscribe, HandshakeSuccess};
+use crate::db_query::DbActor;
 
 pub struct IncomingMsg<M: NodeMessage>(pub Arc<M>);
 
@@ -31,11 +32,12 @@ pub struct NodeActor {
     subscribers_version: Vec<Recipient<IncomingMsg<VersionMessage>>>,
     subscribers_verack: Vec<Recipient<IncomingMsg<VerackMessage>>>,
     subscribers_inv: Vec<Recipient<IncomingMsg<InvMessage>>>,
+    subscribers_headers: Vec<Recipient<IncomingMsg<HeadersMessage>>>,
     subscribers_handshake: Vec<Recipient<HandshakeSuccess>>,
 }
 
 impl NodeActor {
-    pub fn create_from_tcp(stream: TcpStream) -> Addr<Self> {
+    pub fn create_from_stream_db(stream: TcpStream, db_actor: Addr<DbActor>) -> Addr<Self> {
         let local_addr = stream.local_addr().unwrap(); // TODO: handle error
         let peer_addr = stream.peer_addr().unwrap(); // TODO: handle error
         let addr = NodeActor::create(|ctx| {
@@ -51,12 +53,21 @@ impl NodeActor {
                 subscribers_inv: Vec::new(),
                 subscribers_version: Vec::new(),
                 subscribers_verack: Vec::new(),
+                subscribers_headers: Vec::new(),
             }
         });
         InvActor::start(InvActor { node: addr.clone() });
         VersionActor::start(VersionActor { node: addr.clone(), local_addr, peer_addr });
-        //BlockHeaderActor::start(BlockHeaderActor);
+        BlockHeaderActor::start(BlockHeaderActor { node: addr.clone(), db: db_actor });
         addr
+    }
+
+    fn _broadcast<M: NodeMessage + Send + Sync>(msg: MessagePacket, subs: &[Recipient<IncomingMsg<M>>]) {
+        let mut cur = io::Cursor::new(msg.payload());
+        let msg = Arc::new(M::from_stream(&mut cur).unwrap());  // TODO: handle error
+        for sub in subs.iter() {
+            sub.do_send(IncomingMsg(Arc::clone(&msg)));
+        }
     }
 }
 
@@ -73,25 +84,13 @@ impl actix::io::WriteHandler<io::Error> for NodeActor {
 
 impl StreamHandler<MessagePacket, io::Error> for NodeActor {
     fn handle(&mut self, msg: MessagePacket, ctx: &mut Context<Self>) {
-        let mut cur = io::Cursor::new(msg.payload());
         println!("msg: {}", msg);
         match msg.header().command_name() {
-            b"version" => {
-                let msg = Arc::new(
-                    VersionMessage::from_stream(&mut cur).unwrap()  // TODO: handle error
-                );
-                for sub in self.subscribers_version.iter() {
-                    sub.do_send(IncomingMsg(Arc::clone(&msg)));
-                }
-            },
-            b"inv" => {
-                let msg = Arc::new(
-                    InvMessage::from_stream(&mut cur).unwrap()  // TODO: handle error
-                );
-                for sub in self.subscribers_inv.iter() {
-                    sub.do_send(IncomingMsg(Arc::clone(&msg)));
-                }
-            },
+            b"version" => Self::_broadcast(msg, &self.subscribers_version),
+            b"verack" => Self::_broadcast(msg, &self.subscribers_verack),
+            b"inv" => Self::_broadcast(msg, &self.subscribers_inv),
+            b"headers" => Self::_broadcast(msg, &self.subscribers_headers),
+            b"verack" => Self::_broadcast(msg, &self.subscribers_verack),
             _ => {
             },
         }
@@ -107,6 +106,7 @@ impl Handler<Subscribe> for NodeActor {
             Subscribe::Verack(recipient) => self.subscribers_verack.push(recipient),
             Subscribe::Inv(recipient) => self.subscribers_inv.push(recipient),
             Subscribe::HandshakeSuccess(recipient) => self.subscribers_handshake.push(recipient),
+            Subscribe::Headers(recipient) => self.subscribers_headers.push(recipient),
         }
     }
 }
