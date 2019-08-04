@@ -6,7 +6,7 @@ mod message;
 mod codec;
 pub mod actors;
 mod db_query;
-mod msg;
+pub mod msg;
 
 pub use message_packet::*;
 pub use message_error::*;

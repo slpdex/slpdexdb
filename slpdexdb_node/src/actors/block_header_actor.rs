@@ -21,47 +21,52 @@ impl Actor for BlockHeaderActor {
     }
 }
 
+fn dump_err(err: Error) {
+    eprintln!("Error: {}", err);
+}
+
 impl BlockHeaderActor {
     fn _fetch_headers(db: Addr<DbActor>, node: Addr<NodeActor>)
-            -> impl futures::Future<Item=(), Error=()> {
-        db.send(HeaderTipQuery).map(|tip| tip.unwrap())  // TODO: handle error
+            -> impl futures::Future<Item=(), Error=Error> {
+        db.send(HeaderTipQuery).from_err()
+            .and_then(|x| x)
             .and_then(move |tip| {
                 node.send(OutgoingMsg(GetHeadersMessage {
                     version: 70015,
                     block_locator_hashes: vec![tip.header.hash()],
                     hash_stop: [0; 32],
-                }.packet())).map(|_| ())
+                }.packet())).from_err()
             })
-            .map_err(|_| ())
     }
 }
 
 impl Handler<HandshakeSuccess> for BlockHeaderActor {
-    type Result = ();
+    type Result = Response<(), Error>;
 
     fn handle(&mut self, msg: HandshakeSuccess, ctx: &mut Self::Context) -> Self::Result {
-        self.node.do_send(OutgoingMsg(MessagePacket::from_payload(b"sendheaders", vec![])));
-        Arbiter::spawn(Self::_fetch_headers(self.db.clone(), self.node.clone()))
+        let node = self.node.clone();
+        let db = self.db.clone();
+        Response::fut(
+            self.node
+                .send(OutgoingMsg(MessagePacket::from_payload(b"sendheaders", vec![]))).from_err()
+                .and_then(move |_| Self::_fetch_headers(db, node))
+        )
     }
 }
 
 impl Handler<IncomingMsg<HeadersMessage>> for BlockHeaderActor {
-    type Result = ();
+    type Result = Response<(), Error>;
 
     fn handle(&mut self, msg: IncomingMsg<HeadersMessage>, ctx: &mut Self::Context) -> Self::Result {
         let node = self.node.clone();
         let db = self.db.clone();
         if msg.0.headers.len() == 0 {
-            return ();
+            return Response::reply(Ok(()));
         }
-        Arbiter::spawn(
-            self.db.send(AddHeadersQuery(msg.0.headers.clone()))
-                //.map(|tip| tip.unwrap())  // TODO: handle error
-                .map_err(|_| ())
-                .and_then(move |x| {
-                    Self::_fetch_headers(db, node)
-                })
-                .map_err(|_| ())
+        Response::fut(
+            self.db.send(AddHeadersQuery(msg.0.headers.clone())).from_err()
+                .and_then(|r| r)
+                .and_then(move |_| Self::_fetch_headers(db, node))
         )
     }
 }

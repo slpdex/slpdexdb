@@ -1,5 +1,8 @@
 use actix::prelude::*;
 use std::net::SocketAddr;
+use std::convert::identity;
+
+use slpdexdb_base::Error;
 
 use crate::messages::{VersionMessage, VerackMessage};
 use crate::message::NodeMessage;
@@ -23,17 +26,17 @@ impl Actor for VersionActor {
 }
 
 impl Handler<IncomingMsg<VersionMessage>> for VersionActor {
-    type Result = ();
+    type Result = Response<(), Error>;
 
     fn handle(&mut self, msg: IncomingMsg<VersionMessage>, _: &mut Self::Context) -> Self::Result {
-        self.node.do_send(OutgoingMsg(VerackMessage.packet()))
+        Response::fut(self.node.send(OutgoingMsg(VerackMessage.packet())).from_err())
     }
 }
 
 impl Handler<IncomingMsg<VerackMessage>> for VersionActor {
-    type Result = ();
+    type Result = Response<(), Error>;
 
     fn handle(&mut self, msg: IncomingMsg<VerackMessage>, _: &mut Self::Context) -> Self::Result {
-        self.node.do_send(HandshakeSuccess)
+        Response::fut(self.node.send(HandshakeSuccess).from_err().and_then(identity))
     }
 }

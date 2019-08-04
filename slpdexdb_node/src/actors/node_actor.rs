@@ -6,6 +6,8 @@ use tokio_io::AsyncRead;
 use std::io;
 use std::sync::Arc;
 
+use slpdexdb_base::Error;
+
 use crate::codec::MessageCodec;
 use crate::message::NodeMessage;
 use crate::messages::{VersionMessage, VerackMessage, InvMessage, HeadersMessage};
@@ -17,7 +19,7 @@ use crate::db_query::DbActor;
 pub struct IncomingMsg<M: NodeMessage>(pub Arc<M>);
 
 impl<M: NodeMessage> Message for IncomingMsg<M> {
-    type Result = ();
+    type Result = Result<(), Error>;
 }
 
 pub struct OutgoingMsg(pub MessagePacket);
@@ -112,12 +114,13 @@ impl Handler<Subscribe> for NodeActor {
 }
 
 impl Handler<HandshakeSuccess> for NodeActor {
-    type Result = ();
+    type Result = Result<(), Error>;
 
     fn handle(&mut self, msg: HandshakeSuccess, ctx: &mut Self::Context) -> Self::Result {
         for sub in self.subscribers_handshake.iter() {
             sub.do_send(msg.clone());
         }
+        Ok(())
     }
 }
 

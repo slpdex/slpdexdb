@@ -1,4 +1,7 @@
 use actix::prelude::*;
+
+use slpdexdb_base::Error;
+
 use crate::messages::{InvMessage, GetDataMessage};
 use crate::message::NodeMessage;
 use crate::actors::{NodeActor, IncomingMsg, OutgoingMsg};
@@ -17,9 +20,13 @@ impl Actor for InvActor {
 }
 
 impl Handler<IncomingMsg<InvMessage>> for InvActor {
-    type Result = ();
+    type Result = Response<(), Error>;
 
     fn handle(&mut self, msg: IncomingMsg<InvMessage>, _: &mut Self::Context) -> Self::Result {
-        self.node.do_send(OutgoingMsg(GetDataMessage { inv_vectors: msg.0.inv_vectors.clone() }.packet()))
+        Response::fut(
+            self.node.send(
+                OutgoingMsg(GetDataMessage { inv_vectors: msg.0.inv_vectors.clone() }.packet())
+            ).from_err()
+        )
     }
 }

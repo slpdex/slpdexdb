@@ -1,4 +1,5 @@
 use actix::prelude::*;
+use slpdexdb_base::Error;
 use crate::actors::{NodeActor, IncomingMsg};
 use crate::messages::{VersionMessage, VerackMessage, InvMessage, HeadersMessage};
 
@@ -18,5 +19,5 @@ impl Message for Subscribe {
 pub struct HandshakeSuccess;
 
 impl Message for HandshakeSuccess {
-    type Result = ();
+    type Result = Result<(), Error>;
 }
