@@ -1,6 +1,7 @@
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 
+use cashcontracts::Address;
 use slpdexdb_base::BlockHeader;
 use slpdexdb_base::SLPAmount;
 use slpdexdb_base::convert_numeric::rational_to_pg_numeric;
@@ -72,6 +73,34 @@ impl Db {
         } else {
             Ok(Some(tips.remove(0)))
         }
+    }
+
+    pub fn set_address_active(&self, address: &Address, is_active: bool) -> QueryResult<()> {
+        if is_active {
+            diesel::insert_into(active_address::table)
+                .values(models::ActiveAddress { address: address.bytes().to_vec() })
+                .on_conflict_do_nothing()
+                .execute(&self.connection)?;
+        } else {
+            diesel::delete(active_address::table)
+                .filter(
+                    active_address::address.eq(address.bytes().to_vec())
+                )
+                .execute(&self.connection)?;
+        }
+        Ok(())
+    }
+
+    pub fn is_active_address(&self, addresses: &[Address]) -> QueryResult<Vec<bool>> {
+        let payload = addresses.iter().map(|address| address.bytes().to_vec()).collect::<Vec<_>>();
+        let active_addresses = active_address::table
+            .filter(active_address::address.eq_any(payload))
+            .limit(1)
+            .load::<models::ActiveAddress>(&self.connection)?
+            .into_iter()
+            .map(|address| address.address)
+            .collect::<HashSet<_>>();
+        Ok(addresses.iter().map(|address| active_addresses.contains(address.bytes().as_ref())).collect())
     }
 
     pub fn add_tx_history(&self, tx_history: &TxHistory) -> QueryResult<()> {

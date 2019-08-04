@@ -1,4 +1,10 @@
 table! {
+    active_address (address) {
+        address -> Bytea,
+    }
+}
+
+table! {
     blocks (hash) {
         hash -> Bytea,
         height -> Int4,
@@ -8,6 +14,17 @@ table! {
         timestamp -> Int8,
         bits -> Int8,
         nonce -> Int8,
+    }
+}
+
+table! {
+    estimate (id) {
+        id -> Int4,
+        title -> Nullable<Text>,
+        priority -> Nullable<Int4>,
+        estimate_hours -> Nullable<Int4>,
+        actual_hours -> Nullable<Int4>,
+        deviation_reasons -> Nullable<Text>,
     }
 }
 
@@ -118,7 +135,9 @@ joinable!(tx_input -> tx (tx));
 joinable!(tx_output -> tx (tx));
 
 allow_tables_to_appear_in_same_query!(
+    active_address,
     blocks,
+    estimate,
     slp_tx,
     token,
     trade_offer,

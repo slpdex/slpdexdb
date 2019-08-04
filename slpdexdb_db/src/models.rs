@@ -151,6 +151,13 @@ pub struct NewUpdateHistory {
     pub completed:       bool, // BOOL NOT NULL
 }
 
+#[derive(Queryable)]
+#[derive(Insertable)]
+#[table_name="active_address"]
+pub struct ActiveAddress {
+    pub address: Vec<u8>,
+}
+
 /*#[derive(Queryable)]
 pub struct Utxo {
     pub tx:          i64, // BIGINT NOT NULL,
