@@ -4,6 +4,5 @@ members = [
     "slpdexdb_endpoint",
     "slpdexdb_db",
     "slpdexdb_node",
-    "slpdexdb_fetch",
     "slpdexdb_base",
 ]
