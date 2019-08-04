@@ -10,7 +10,7 @@ use slpdexdb_base::Error;
 
 use crate::codec::MessageCodec;
 use crate::message::NodeMessage;
-use crate::messages::{VersionMessage, VerackMessage, InvMessage, HeadersMessage};
+use crate::messages::{VersionMessage, VerackMessage, InvMessage, HeadersMessage, TxMessage};
 use crate::message_packet::MessagePacket;
 use crate::actors::{VersionActor, InvActor, BlockHeaderActor};
 use crate::msg::{Subscribe, HandshakeSuccess};
@@ -35,6 +35,7 @@ pub struct NodeActor {
     subscribers_verack: Vec<Recipient<IncomingMsg<VerackMessage>>>,
     subscribers_inv: Vec<Recipient<IncomingMsg<InvMessage>>>,
     subscribers_headers: Vec<Recipient<IncomingMsg<HeadersMessage>>>,
+    subscribers_tx: Vec<Recipient<IncomingMsg<TxMessage>>>,
     subscribers_handshake: Vec<Recipient<HandshakeSuccess>>,
 }
 
@@ -56,6 +57,7 @@ impl NodeActor {
                 subscribers_version: Vec::new(),
                 subscribers_verack: Vec::new(),
                 subscribers_headers: Vec::new(),
+                subscribers_tx: Vec::new(),
             }
         });
         InvActor::start(InvActor { node: addr.clone() });
@@ -93,6 +95,7 @@ impl StreamHandler<MessagePacket, io::Error> for NodeActor {
             b"inv" => Self::_broadcast(msg, &self.subscribers_inv),
             b"headers" => Self::_broadcast(msg, &self.subscribers_headers),
             b"verack" => Self::_broadcast(msg, &self.subscribers_verack),
+            b"tx" => Self::_broadcast(msg, &self.subscribers_tx),
             _ => {
             },
         }
@@ -109,6 +112,7 @@ impl Handler<Subscribe> for NodeActor {
             Subscribe::Inv(recipient) => self.subscribers_inv.push(recipient),
             Subscribe::HandshakeSuccess(recipient) => self.subscribers_handshake.push(recipient),
             Subscribe::Headers(recipient) => self.subscribers_headers.push(recipient),
+            Subscribe::Tx(recipient) => self.subscribers_tx.push(recipient),
         }
     }
 }

@@ -1,7 +1,7 @@
 use actix::prelude::*;
 use slpdexdb_base::Error;
 use crate::actors::{NodeActor, IncomingMsg};
-use crate::messages::{VersionMessage, VerackMessage, InvMessage, HeadersMessage};
+use crate::messages::{VersionMessage, VerackMessage, InvMessage, HeadersMessage, TxMessage};
 
 pub enum Subscribe {
     HandshakeSuccess(Recipient<HandshakeSuccess>),
@@ -9,6 +9,7 @@ pub enum Subscribe {
     Verack(Recipient<IncomingMsg<VerackMessage>>),
     Inv(Recipient<IncomingMsg<InvMessage>>),
     Headers(Recipient<IncomingMsg<HeadersMessage>>),
+    Tx(Recipient<IncomingMsg<TxMessage>>),
 }
 
 impl Message for Subscribe {
