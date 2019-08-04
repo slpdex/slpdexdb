@@ -9,6 +9,7 @@ use crate::tx_history::{TxHistory, TxType};
 use crate::update_history::{UpdateHistory, UpdateSubjectType};
 use crate::token::Token;
 use crate::{models, schema::*};
+use crate::convert::pg_safe_string;
 
 use std::collections::{HashMap, HashSet, BTreeSet};
 
@@ -261,9 +262,9 @@ impl Db {
                         decimals: token.decimals,
                         timestamp: token.timestamp,
                         version_type: token.version_type,
-                        document_uri: token.document_uri.clone(),
-                        symbol: token.symbol.clone(),
-                        name: token.name.clone(),
+                        document_uri: token.document_uri.clone().map(pg_safe_string),
+                        symbol: token.symbol.clone().map(pg_safe_string),
+                        name: token.name.clone().map(pg_safe_string),
                         document_hash: token.document_hash.clone(),
                         initial_supply: token.initial_supply.into(),
                         current_supply: token.current_supply.into(),
