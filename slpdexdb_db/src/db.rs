@@ -10,6 +10,7 @@ use crate::update_history::{UpdateHistory, UpdateSubjectType};
 use crate::token::Token;
 use crate::{models, schema::*};
 use crate::convert::pg_safe_string;
+use crate::data::{Utxo, TxDelta};
 
 use std::collections::{HashMap, HashSet, BTreeSet};
 
@@ -332,6 +333,7 @@ impl Db {
     }
 
     pub fn update_utxo_set_exch(&self) -> QueryResult<()> {
+        use diesel::dsl::*;
         self.connection.transaction(|| {
             diesel::delete(utxo_trade_offer::table)
                 .execute(&self.connection)?;
@@ -339,9 +341,10 @@ impl Db {
                 .values(
                     tx_output::table
                         .left_join(tx::table)
-                        .left_join(trade_offer::table.on(
+                        .inner_join(trade_offer::table.on(
                             tx_output::tx.eq(trade_offer::tx)
                                 .and(tx_output::idx.nullable().eq(trade_offer::output_idx))
+                                .and(not(trade_offer::output_idx.is_null()))
                         ))
                         .left_outer_join(tx_input::table.on(
                             tx::hash.eq(tx_input::output_tx)
@@ -350,8 +353,169 @@ impl Db {
                         .filter(tx_input::tx.is_null())
                         .select((tx_output::tx, tx_output::idx))
                 )
+                .on_conflict_do_nothing()  // this shouldn't happen
                 .execute(&self.connection)?;
             Ok(())
         })
+    }
+
+    pub fn utxos_address(&self, address: &Address) -> QueryResult<Vec<Utxo>> {
+        use diesel::data_types::PgNumeric;
+        let result = tx_output::table
+            .inner_join(utxo_address::table.on(
+                tx_output::tx.eq(utxo_address::tx).and(tx_output::idx.eq(utxo_address::idx))
+            ))
+            .inner_join(tx::table)
+            .left_join(slp_tx::table.on(tx::id.eq(slp_tx::tx)))
+            .left_join(token::table.on(slp_tx::token.eq(token::id)))
+            .filter(utxo_address::address.eq(address.bytes().to_vec()))
+            .select((tx::hash,
+                     tx_output::idx,
+                     tx_output::value_satoshis,
+                     tx_output::value_token_base,
+                     token::hash.nullable(),
+                     token::decimals.nullable()))
+            .load::<(Vec<u8>, i32, i64, PgNumeric, Option<Vec<u8>>, Option<i32>)>(&self.connection)?;
+        Ok(result.into_iter()
+            .map(|(tx_hash, vout, value_satoshis, value_token_base, token_hash, decimals)| {
+                let slp_amount = decimals.map(
+                    |decimals| SLPAmount::from_numeric_decimals(&value_token_base, decimals as u32)
+                ).unwrap_or(SLPAmount::new(0, 0));
+                Utxo {
+                    tx_hash: {
+                        let mut hash = [0; 32];
+                        hash.copy_from_slice(&tx_hash);
+                        hash
+                    },
+                    vout,
+                    value_satoshis: value_satoshis as u64,
+                    value_token: slp_amount,
+                    token_hash: token_hash.and_then(|token_hash| {
+                        if slp_amount.base_amount() > 0 {
+                            let mut hash = [0; 32];
+                            hash.copy_from_slice(&token_hash);
+                            Some(hash)
+                        } else {
+                            None
+                        }
+                    }),
+                }
+            })
+            .collect())
+    }
+
+    pub fn address_tx_deltas(&self, address: &Address) -> QueryResult<Vec<TxDelta>> {
+        use diesel::data_types::PgNumeric;
+        use diesel::sql_types::Binary;
+        let input_query = diesel::sql_query("\
+            SELECT
+                tx.id AS tx_id,
+                tx.hash AS tx_hash,
+                tx.timestamp AS timestamp,
+                SUM(tx_input_output.value_satoshis)::NUMERIC AS input_value_satoshis,
+                SUM(tx_input_output.value_token_base) AS input_value_token_base,
+                token.hash AS token_hash,
+                token.decimals AS decimals
+            FROM tx
+                LEFT JOIN slp_tx                       ON (tx.id = slp_tx.tx)
+                LEFT JOIN token                        ON (token.id = slp_tx.token)
+                LEFT JOIN tx_input                     ON (tx.id = tx_input.tx AND
+                                                           tx_input.address = $1)
+                LEFT JOIN tx        AS tx_input_tx     ON (tx_input_tx.hash = tx_input.output_tx)
+                LEFT JOIN tx_output AS tx_input_output ON (tx_input_tx.id = tx_input_output.tx AND
+                                                           tx_input.output_idx = tx_input_output.idx)
+            WHERE
+                tx_input.address = $1
+            GROUP BY tx.id, tx.hash, token.hash, token.decimals
+        ").bind::<Binary, _>(address.bytes().to_vec());
+        let output_query = diesel::sql_query("\
+            SELECT
+                tx.id AS tx_id,
+                tx.hash AS tx_hash,
+                tx.timestamp AS timestamp,
+                SUM(tx_output.value_satoshis)::NUMERIC AS output_value_satoshis,
+                SUM(tx_output.value_token_base) AS output_value_token_base,
+                token.hash AS token_hash,
+                token.decimals AS decimals
+            FROM tx
+                LEFT JOIN slp_tx                       ON (tx.id = slp_tx.tx)
+                LEFT JOIN token                        ON (token.id = slp_tx.token)
+                LEFT JOIN tx_output                    ON (tx.id = tx_output.tx AND
+                                                           tx_output.address = $1)
+            WHERE
+                tx_output.address = $1
+            GROUP BY tx.id, tx.hash, token.hash, token.decimals
+        ").bind::<Binary, _>(address.bytes().to_vec());
+        let mut result_input = input_query
+            .load::<models::TxDeltaInput>(&self.connection)?
+            .into_iter()
+            .map(|delta_input| (delta_input.tx_id, delta_input))
+            .collect::<HashMap<_, _>>();
+        let mut result_output = output_query
+            .load::<models::TxDeltaOutput>(&self.connection)?
+            .into_iter()
+            .map(|delta_output| (delta_output.tx_id, delta_output))
+            .collect::<HashMap<_, _>>();
+        let tx_ids = result_input.keys().cloned()
+            .chain(result_output.keys().cloned())
+            .collect::<HashSet<_>>();
+        Ok(tx_ids.into_iter()
+            .map(|(tx_id)| {
+                let delta_input = result_input.remove(&tx_id);
+                let delta_output = result_output.remove(&tx_id);
+                let (decimals, token_hash) = delta_input.as_ref()
+                    .and_then(
+                        |delta_input| Some((delta_input.decimals?,
+                                            Some(delta_input.token_hash.clone()?)))
+                    )
+                    .or_else(|| delta_output.as_ref().and_then(|delta_output| {
+                        Some((delta_output.decimals?, Some(delta_output.token_hash.clone()?)))
+                    }))
+                    .unwrap_or((0, None));
+                let decimals = decimals as u32;
+                let zero = SLPAmount::new(0, decimals);
+                let map_numeric = |numeric: &Option<PgNumeric>| numeric.as_ref()
+                    .map(|numeric| SLPAmount::from_numeric_decimals(numeric, decimals))
+                    .unwrap_or(zero);
+                let (input_value_satoshis, input_value_token) = delta_input.as_ref()
+                    .map(|delta_input| (
+                        map_numeric(&delta_input.input_value_satoshis).base_amount(),
+                        map_numeric(&delta_input.input_value_token_base),
+                    ))
+                    .unwrap_or((0, zero));
+                let (output_value_satoshis, output_value_token) = delta_output.as_ref()
+                    .map(|delta_output| (
+                        map_numeric(&delta_output.output_value_satoshis).base_amount(),
+                        map_numeric(&delta_output.output_value_token_base),
+                    ))
+                    .unwrap_or((0, zero));
+                let delta_satoshis = output_value_satoshis - input_value_satoshis;
+                let delta_token = output_value_token - input_value_token;
+                TxDelta {
+                    tx_hash: {
+                        let mut hash = [0; 32];
+                        hash.copy_from_slice(&delta_output.as_ref()
+                            .map(|delta_output| delta_output.tx_hash.clone())
+                            .unwrap_or_else(|| delta_input.as_ref().unwrap().tx_hash.clone())
+                        );
+                        hash
+                    },
+                    token_hash: token_hash.and_then(|token_hash| {
+                        if delta_token.base_amount() != 0 {
+                            let mut hash = [0; 32];
+                            hash.copy_from_slice(&token_hash);
+                            Some(hash)
+                        } else {
+                            None
+                        }
+                    }),
+                    delta_satoshis: delta_satoshis as i64,
+                    delta_token,
+                    timestamp: delta_output.as_ref()
+                        .map(|delta_output| delta_output.timestamp)
+                        .unwrap_or_else(|| delta_input.as_ref().unwrap().timestamp),
+                }
+            })
+            .collect())
     }
 }
