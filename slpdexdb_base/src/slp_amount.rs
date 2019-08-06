@@ -200,8 +200,8 @@ impl Display for SLPAmount {
             return Ok(())
         }
         let factor = (10i128).pow(self.decimals);
-        let integer_part = self.base_amount / factor;
-        let fract_part = self.base_amount % factor;
+        let integer_part = (self.base_amount / factor).abs();
+        let fract_part = (self.base_amount % factor).abs();
         f.pad_integral(
             self.base_amount >= 0,
             "",
