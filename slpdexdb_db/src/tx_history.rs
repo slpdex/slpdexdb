@@ -5,7 +5,7 @@ use crate::db::Db;
 use byteorder::{BigEndian, ReadBytesExt};
 use std::io;
 use std::collections::{HashSet, HashMap};
-use cashcontracts::{Output, AddressType, Address};
+use cashcontracts::{Output, AddressType, Address, tx_hash_to_hex};
 use rug::Rational;
 
 #[derive(Clone, Debug)]
@@ -256,7 +256,7 @@ impl TxHistory {
         let script_hex = || hex::encode(script.to_vec());
         let ops = script.ops();
         match ops.get(1) {
-            Some(Push(lokad_id)) if lokad_id != b"SLP\0" => {},
+            Some(Push(lokad_id)) if lokad_id == b"SLP\0" => {},
             _ => return Ok(None),
         }
         if ops.len() < 6 {
@@ -275,7 +275,7 @@ impl TxHistory {
                         SLPError::InvalidTokenTypeLength(hex::encode(token_type)),
                     ).into());
                 }
-                if token_id.len() == 32 {
+                if token_id.len() != 32 {
                     return Err(ErrorKind::InvalidSLPOutput(
                         script_hex(),
                         SLPError::InvalidTokenHashLength(hex::encode(token_id))
@@ -343,7 +343,7 @@ impl TxHistory {
                     match Self::_process_slp_output(&output.script, db) {
                         Ok(slp_output) => slp_output,
                         Err(err) => {
-                            eprintln!("Invalid SLP output: {}", err);
+                            eprintln!("Invalid SLP output: {} in {}", err, tx_hash_to_hex(&tx.hash()));
                             None
                         },
                     }
@@ -646,7 +646,7 @@ impl TradeOffer {
                    config: &SLPDEXConfig,
                    token: &Token) -> Option<Self> {
         use cashcontracts::{Op::*, OpCodeType::*};
-        println!("validating trade offer");
+        println!("validating trade offer {}", tx_hash_to_hex(&historic_tx.hash));
         if let TxType::Default = &historic_tx.tx_type {
             return None
         }
