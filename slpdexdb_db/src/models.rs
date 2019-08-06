@@ -1,6 +1,8 @@
 use crate::schema::*;
 use slpdexdb_base::BlockHeader;
 use diesel::data_types::PgNumeric;
+use diesel::sql_types::{Binary, BigInt, Numeric, Integer, Nullable};
+
 
 #[derive(Queryable)]
 #[derive(Insertable)]
@@ -158,20 +160,43 @@ pub struct ActiveAddress {
     pub address: Vec<u8>,
 }
 
-/*#[derive(Queryable)]
-pub struct Utxo {
-    pub tx:          i64, // BIGINT NOT NULL,
-    pub idx:         i32, // INT NOT NULL,
+#[derive(Debug)]
+#[derive(QueryableByName)]
+pub struct TxDeltaInput {
+    #[sql_type="BigInt"]
+    pub tx_id: i64,
+    #[sql_type="Binary"]
+    pub tx_hash: Vec<u8>,
+    #[sql_type="BigInt"]
+    pub timestamp: i64,
+    #[sql_type="Nullable<Numeric>"]
+    pub input_value_satoshis: Option<PgNumeric>,
+    #[sql_type="Nullable<Numeric>"]
+    pub input_value_token_base: Option<PgNumeric>,
+    #[sql_type="Nullable<Binary>"]
+    pub token_hash: Option<Vec<u8>>,
+    #[sql_type="Nullable<Integer>"]
+    pub decimals: Option<i32>,
 }
 
-#[derive(Queryable)]
-pub struct UtxoView {
-    pub tx:          i64,
-    pub idx:         i32,
-    pub address:     Option<Vec<u8>>,
-    pub trade_offer: Option<i32>,
-}*/
-
+#[derive(Debug)]
+#[derive(QueryableByName)]
+pub struct TxDeltaOutput {
+    #[sql_type="BigInt"]
+    pub tx_id: i64,
+    #[sql_type="Binary"]
+    pub tx_hash: Vec<u8>,
+    #[sql_type="BigInt"]
+    pub timestamp: i64,
+    #[sql_type="Nullable<Numeric>"]
+    pub output_value_satoshis: Option<PgNumeric>,
+    #[sql_type="Nullable<Numeric>"]
+    pub output_value_token_base: Option<PgNumeric>,
+    #[sql_type="Nullable<Binary>"]
+    pub token_hash: Option<Vec<u8>>,
+    #[sql_type="Nullable<Integer>"]
+    pub decimals: Option<i32>,
+}
 
 impl Block {
     pub fn from_block_header(header: &BlockHeader, height: i32) -> Block {
