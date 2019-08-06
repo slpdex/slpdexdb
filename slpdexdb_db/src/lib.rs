@@ -12,6 +12,8 @@ mod token_source;
 mod tx_source;
 mod tx_history;
 mod update_history;
+mod convert;
+mod data;
 
 pub use db::*;
 pub use endpoint::*;
@@ -20,6 +22,7 @@ pub use token_source::*;
 pub use tx_source::*;
 pub use tx_history::*;
 pub use update_history::*;
+pub use data::*;
 
 //use slpdexdb_base::Result;
 
