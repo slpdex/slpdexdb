@@ -62,7 +62,7 @@ impl Handler<ConnectToPeer> for PeersActor {
 impl Handler<PeerConnected> for PeersActor {
     type Result = ();
 
-    fn handle(&mut self, msg: PeerConnected, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: PeerConnected, _ctx: &mut Self::Context) -> Self::Result {
         self.nodes.push(msg.node);
     }
 }
@@ -70,7 +70,7 @@ impl Handler<PeerConnected> for PeersActor {
 impl Handler<IncomingMsg<TxMessage>> for PeersActor {
     type Result = Response<(), Error>;
 
-    fn handle(&mut self, msg: IncomingMsg<TxMessage>, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: IncomingMsg<TxMessage>, _ctx: &mut Self::Context) -> Self::Result {
         Response::fut(self.tx_actor.send(msg).from_err().and_then(identity))
     }
 }

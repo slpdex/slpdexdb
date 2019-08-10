@@ -27,7 +27,7 @@ impl TxActor {
 impl Actor for TxActor {
     type Context = Context<Self>;
 
-    fn started(&mut self, ctx: &mut Self::Context) {
+    fn started(&mut self, _ctx: &mut Self::Context) {
         //self.node.do_send(Subscribe::Tx(ctx.address().recipient()));
     }
 }
@@ -63,7 +63,7 @@ impl Handler<IncomingMsg<TxMessage>> for TxActor {
 impl Handler<ActivateAddress> for TxActor {
     type Result = Response<(), Error>;
 
-    fn handle(&mut self, msg: ActivateAddress, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: ActivateAddress, _ctx: &mut Self::Context) -> Self::Result {
         let ActivateAddress(address) = msg;
         let resync = self.resync.clone();
         Response::fut(
@@ -77,7 +77,7 @@ impl Handler<ActivateAddress> for TxActor {
 impl Handler<DeactivateAddress> for TxActor {
     type Result = Result<(), Error>;
 
-    fn handle(&mut self, msg: DeactivateAddress, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: DeactivateAddress, _ctx: &mut Self::Context) -> Self::Result {
         let DeactivateAddress(address) = msg;
         Ok(self.db.set_address_active(&address, false)?)
     }
@@ -86,7 +86,7 @@ impl Handler<DeactivateAddress> for TxActor {
 impl Handler<FetchAddressUtxos> for TxActor {
     type Result = Result<Vec<Utxo>, Error>;
 
-    fn handle(&mut self, msg: FetchAddressUtxos, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: FetchAddressUtxos, _ctx: &mut Self::Context) -> Self::Result {
         let FetchAddressUtxos(address) = msg;
         Ok(self.db.utxos_address(&address)?)
     }
@@ -95,7 +95,7 @@ impl Handler<FetchAddressUtxos> for TxActor {
 impl Handler<FetchAddressTxDeltas> for TxActor {
     type Result = Result<Vec<TxDelta>, Error>;
 
-    fn handle(&mut self, msg: FetchAddressTxDeltas, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: FetchAddressTxDeltas, _ctx: &mut Self::Context) -> Self::Result {
         let FetchAddressTxDeltas(address) = msg;
         Ok(self.db.address_tx_deltas(&address)?)
     }
