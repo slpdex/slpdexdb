@@ -3,6 +3,7 @@ mod resync_actor;
 mod tx_actor;
 mod peers_actor;
 mod ws_actor;
+pub mod broadcast_actor;
 
 pub use db_actor::*;
 pub use resync_actor::*;
