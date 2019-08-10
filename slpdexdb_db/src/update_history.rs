@@ -1,10 +1,11 @@
 use crate::tx_source::{TxFilter, SortKey};
 use crate::tx_history::TxHistory;
 use crate::token::Token;
-use cashcontracts::{Address, AddressType};
+use cashcontracts::{Address, AddressType, tx_hash_to_hex};
+use crate::data::tx_hash_from_slice;
 
 
-#[derive(Copy, Clone, FromPrimitive)]
+#[derive(Copy, Clone, FromPrimitive, Debug)]
 pub enum UpdateSubjectType {
     Token = 1,
     Exch = 2,
@@ -13,6 +14,7 @@ pub enum UpdateSubjectType {
     TokenStats = 5,
 }
 
+#[derive(Clone, Debug)]
 pub struct UpdateHistory {
     pub last_height:   i32,
     pub last_tx_hash:  Option<Vec<u8>>,
@@ -90,5 +92,16 @@ impl UpdateHistory {
             subject_hash: None,
             completed: tokens.is_empty(),
         }
+    }
+}
+
+impl std::fmt::Display for UpdateHistory {
+    fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> Result<(), std::fmt::Error> {
+        writeln!(f, "last_height: {}", self.last_height)?;
+        writeln!(f, "last_tx_hash: {:?}", self.last_tx_hash.as_ref().map(|tx_hash| tx_hash_from_slice(tx_hash)).as_ref().map(tx_hash_to_hex))?;
+        writeln!(f, "subject_type: {:?}", self.subject_type)?;
+        writeln!(f, "subject_hash: {:?}", self.subject_hash.as_ref().map(hex::encode))?;
+        writeln!(f, "completed: {}", self.completed)?;
+        Ok(())
     }
 }
