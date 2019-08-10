@@ -11,7 +11,7 @@ use rug::Rational;
 #[derive(Clone, Debug)]
 pub struct TxHistory {
     pub txs: Vec<HistoricTx>,
-    pub trade_offers: Vec<(usize, TradeOffer)>,
+    pub trade_offers: HashMap<usize, TradeOffer>,
 }
 
 #[derive(Clone, Debug)]
@@ -53,7 +53,7 @@ pub enum OutputType {
 #[derive(Clone, Debug)]
 pub struct HistoricTxOutput {
     pub value_satoshis: u64,
-    pub value_token_base: SLPAmount,
+    pub value_token: SLPAmount,
     pub output: OutputType,
 }
 
@@ -73,7 +73,7 @@ pub struct TradeOffer {
     pub price_per_token: Rational,
     pub script_price: i64,
     pub is_inverted: bool,
-    pub sell_amount_token_base: SLPAmount,
+    pub sell_amount_token: SLPAmount,
     pub receiving_address: Address,
 }
 
@@ -163,7 +163,7 @@ impl TxHistory {
                 .map(|(i, output)| {
                     HistoricTxOutput {
                         value_satoshis: output.e.v,
-                        value_token_base: match &entry.slp {
+                        value_token: match &entry.slp {
                             Some(slp) if i > 0 => {
                                 let decimals = slp.detail.decimals as u32;
                                 slp.detail.outputs
@@ -356,7 +356,7 @@ impl TxHistory {
                 .map(|(output_idx, output)| {
                     HistoricTxOutput {
                         value_satoshis: output.value,
-                        value_token_base: slp_amounts.get(output_idx).cloned()
+                        value_token: slp_amounts.get(output_idx).cloned()
                             .unwrap_or(SLPAmount::new(
                                 0,
                                 token.as_ref().map(|token| token.decimals as u32).unwrap_or(0),
@@ -368,7 +368,7 @@ impl TxHistory {
                     slp_amounts.iter().skip(tx.outputs().len()).map(|amount| {
                         HistoricTxOutput {
                             value_satoshis: 0,
-                            value_token_base: *amount,
+                            value_token: *amount,
                             output: OutputType::Burned,
                         }
                     })
@@ -444,24 +444,19 @@ impl TxHistory {
         for validity in validity_map.values() {
             println!("{}", serde_json::to_string(validity).unwrap_or(".".to_string()));
         }
-        let mut txs = Vec::new();
-        let mut trade_offers = Vec::new();
         for i in 0..self.txs.len() {
-            let tx = self.txs.remove(0);
+            let tx = &mut self.txs[i];
             let (token_hash, token_type) = match &tx.tx_type {
                 TxType::SLP {token_hash, token_type, ..} => (token_hash, token_type),
-                TxType::Default => {
-                    txs.push(tx);
-                    continue;
-                },
+                TxType::Default => continue,
             };
             println!("validating {}", cashcontracts::tx_hash_to_hex(&tx.hash));
             println!("token found: ");
             let decimals = tx.outputs.iter()
-                .map(|output| output.value_token_base.decimals())
+                .map(|output| output.value_token.decimals())
                 .next();
             let output_sum = tx.outputs.iter()
-                .map(|output| output.value_token_base)
+                .map(|output| output.value_token)
                 .sum::<SLPAmount>();
             let input_sum = tx.inputs.iter()
                 .filter_map(|input| Some((input, validity_map.get(&input.output_tx)?)))
@@ -481,20 +476,14 @@ impl TxHistory {
                 .sum::<SLPAmount>();
             println!("input sum: {}", input_sum);
             println!("output sum: {}", output_sum);
-            if input_sum >= output_sum {
-                match self.trade_offers.iter()
-                        .enumerate()
-                        .find_map(|(j, (idx, _))| {
-                            if *idx == i { Some(j) } else { None }
-                        }) {
-                    Some(idx) => trade_offers.push((txs.len(), self.trade_offers.remove(idx).1)),
-                    None => {},
-                };
-                txs.push(tx);
+            if input_sum < output_sum {
+                tx.tx_type = TxType::Default;
+                tx.outputs.iter_mut().for_each(|output| {
+                    output.value_token = SLPAmount::new(0, 0);
+                });
+                self.trade_offers.remove(&i);
             }
         }
-        self.txs = txs;
-        self.trade_offers = trade_offers;
         Ok(())
     }
 }
@@ -569,7 +558,7 @@ impl TradeOffer {
                     is_inverted: price.is_inverted,
                     token_id: token_hash.clone(),
                     token_type: token_type as u8,
-                    sell_amount_token: output.value_token_base.base_amount() as u64,
+                    sell_amount_token: output.value_token.base_amount() as u64,
                     price: price.script_price,
                     dust_amount: config.dust_limit,
                     address: receiving_address.clone(),
@@ -579,7 +568,7 @@ impl TradeOffer {
                 }.script().to_vec()
             );
             if address.bytes() == &hash {
-                Some(output.value_token_base)
+                Some(output.value_token)
             } else {
                 None
             }
@@ -630,7 +619,7 @@ impl TradeOffer {
                     price_per_token: price.price_per_token,
                     is_inverted: price.is_inverted,
                     script_price: price.script_price as i64,
-                    sell_amount_token_base: contract_vals
+                    sell_amount_token: contract_vals
                         .map(|(_, amount)| amount)
                         .unwrap_or(SLPAmount::new(0, decimals)),
                     receiving_address,
@@ -687,7 +676,7 @@ impl TradeOffer {
                         price_per_token: price.price_per_token,
                         is_inverted: price.is_inverted,
                         script_price: price.script_price as i64,
-                        sell_amount_token_base: contract_vals
+                        sell_amount_token: contract_vals
                             .map(|(_, amount)| amount)
                             .unwrap_or(SLPAmount::new(0, token.decimals as u32)),
                         receiving_address,
