@@ -62,30 +62,22 @@ impl Actor for TxActor {
 }
 
 impl Handler<IncomingMsg<TxMessage>> for TxActor {
-    type Result = Result<(), Error>;
+    type Result = Response<(), Error>;
 
-    fn handle(&mut self, msg: IncomingMsg<TxMessage>, ctx: &mut Self::Context) -> Self::Result {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+    fn handle(&mut self, msg: IncomingMsg<TxMessage>, _ctx: &mut Self::Context) -> Self::Result {
         let tx = msg.0.tx.clone();
-        let mut history = TxHistory::from_txs(&[tx], timestamp, &self.config, &self.db);
-        let addresses = history.txs.iter()
-            .flat_map(|tx| {
-                tx.outputs.iter()
-                    .map(|output| output.output.clone())
-                    .chain(tx.inputs.iter().map(|input| input.output.clone()))
-                    .filter_map(|output| match output {
-                        OutputType::Address(address) => Some(address),
-                        _ => None,
-                    })
-            })
-            .collect::<Vec<_>>();
-        if history.trade_offers.len() == 0 &&
-                !self.db.is_active_address(&addresses)?.iter().any(|x| *x) {
-            return Ok(())
-        }
-        history.validate_slp(&TxSource::new(), &self.db, &self.config)?;
-        self.db.add_tx_history(&history)?;
-        Ok(())
+        Response::fut(
+            self.resync
+                .send(ProcessTransactions {
+                    db: self.db.clone(),
+                    subscribers: self.subscribers.clone(),
+                    txs: vec![tx],
+                    config: self.config.clone(),
+                    broadcasts: self.broadcasts.clone(),
+                })
+                .from_err()
+                .and_then(identity)
+        )
     }
 }
 

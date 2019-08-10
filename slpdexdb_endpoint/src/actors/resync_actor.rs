@@ -1,4 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::collections::HashSet;
 use actix::prelude::*;
 use cashcontracts::Address;
 use slpdexdb_base::{Error, SLPDEXConfig};
@@ -120,5 +122,48 @@ impl Handler<ResyncAddress> for ResyncActor {
     fn handle(&mut self, msg: ResyncAddress, _ctx: &mut Self::Context) -> Self::Result {
         let address = msg.0;
         _resync_address(&self.db, &self.config, &address)
+    }
+}
+
+impl Handler<ProcessTransactions> for ResyncActor {
+    type Result = Result<(), Error>;
+
+    fn handle(&mut self, msg: ProcessTransactions, _ctx: &mut Self::Context) -> Self::Result {
+        let tx_source = TxSource::new();
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        let db = msg.db.lock().unwrap();
+        let mut history = TxHistory::from_txs(&msg.txs, timestamp, &msg.config, &*db);
+        let addresses = history.txs.iter()
+            .flat_map(|tx| {
+                tx.outputs.iter()
+                    .map(|output| output.output.clone())
+                    .chain(tx.inputs.iter().map(|input| input.output.clone()))
+                    .filter_map(|output| match output {
+                        OutputType::Address(address) => Some(address),
+                        _ => None,
+                    })
+            })
+            .collect::<Vec<_>>();
+        let subscribers_addresses = &msg.subscribers.lock().unwrap().subscribers_address;
+        let relevant_addresses = addresses.into_iter()
+            .filter(|address| subscribers_addresses.contains_key(address))
+            .collect::<HashSet<_>>();
+        if history.trade_offers.len() == 0 && relevant_addresses.len() == 0 {
+            return Ok(())
+        }
+        history.validate_slp(&tx_source, &*db, &msg.config)?;
+        db.add_tx_history(&history)?;
+        println!("txs valid.");
+        let new_transactions = NewTransactions {
+            now: timestamp,
+            subscribers: msg.subscribers.clone(),
+            tx_history: Arc::new(history),
+            db: msg.db.clone(),
+            relevant_addresses: Arc::new(relevant_addresses),
+        };
+        for broadcast in msg.broadcasts.iter() {
+            broadcast.do_send(new_transactions.clone()).unwrap();  // TODO: handle error
+        }
+        Ok(())
     }
 }
