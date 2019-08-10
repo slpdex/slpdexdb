@@ -160,6 +160,23 @@ pub struct ActiveAddress {
     pub address: Vec<u8>,
 }
 
+#[derive(Queryable)]
+#[derive(Insertable)]
+#[table_name="utxo_address"]
+pub struct UtxoAddress {
+    pub tx: i64,
+    pub idx: i32,
+    pub address: Option<Vec<u8>>,
+}
+
+#[derive(Queryable)]
+#[derive(Insertable)]
+#[table_name="utxo_trade_offer"]
+pub struct Utxo {
+    pub tx: i64,
+    pub idx: i32,
+}
+
 #[derive(Debug)]
 #[derive(QueryableByName)]
 pub struct TxDeltaInput {
