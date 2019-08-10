@@ -1,3 +1,4 @@
+#[derive(Clone, Debug)]
 pub struct SLPDEXConfig {
     pub fee_address: cashcontracts::Address,
     pub fee_divisor: u64,
