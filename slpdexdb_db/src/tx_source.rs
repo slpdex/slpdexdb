@@ -213,10 +213,13 @@ impl TxFilter {
             })
             .map(JsonValue::String)
             .collect::<Vec<_>>();
-        vec![
-            ("out.e.a", object!{"$in" => JsonValue::Array(base_address_list)}),
+        let mut result = vec![
             ("out.b1", object!{"$ne" => JsonValue::String(base64::encode(b"SLP\0"))}),
-        ]
+        ];
+        if base_address_list.len() > 0 {
+            result.push(("out.e.a", object!{"$in" => JsonValue::Array(base_address_list)}));
+        }
+        result
     }
 
     pub fn base_conditions(filters: &[TxFilter]) -> Vec<(&'static str, JsonValue)> {
