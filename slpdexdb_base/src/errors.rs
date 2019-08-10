@@ -28,6 +28,7 @@ pub enum TradeOfferError {
 pub enum TokenError {
     TokenNotMinedYet(String),
     UnknownTokenId(String),
+    InvalidTokenHex(String),
 }
 
 error_chain! {
