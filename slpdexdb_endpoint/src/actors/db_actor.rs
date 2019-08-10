@@ -1,7 +1,7 @@
 use actix::prelude::*;
 use diesel::prelude::*;
 use slpdexdb_base::{Error, GENESIS};
-use slpdexdb_db::{Pool, Db};
+use slpdexdb_db::Db;
 use slpdexdb_node::{HeaderTipQuery, HeaderTip, AddHeadersQuery};
 
 
