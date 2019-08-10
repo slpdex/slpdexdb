@@ -2,8 +2,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use actix::prelude::*;
 use cashcontracts::Address;
 use slpdexdb_base::{Error, SLPDEXConfig};
-use slpdexdb_db::{Db, TxSource, TokenSource, UpdateSubjectType, UpdateHistory, TxHistory, Token};
-use crate::msg::ResyncAddress;
+use slpdexdb_db::{Db, TxSource, TokenSource, UpdateSubjectType, UpdateHistory, TxHistory, Token, OutputType};
+use crate::msg::{ResyncAddress, ProcessTransactions, NewTransactions};
 
 
 fn _resync(db: &Db, config: &SLPDEXConfig) -> Result<(), Error> {
@@ -17,7 +17,7 @@ fn _resync_tokens(db: &Db) -> Result<(), Error> {
     loop {
         let current_height = db.header_tip()?.map(|(_, height)| height).unwrap_or(0);
         let last_update =
-            db.last_update(UpdateSubjectType::Token)?
+            db.last_update(UpdateSubjectType::Token, None)?
                 .unwrap_or(UpdateHistory::initial(UpdateSubjectType::Token, None));
         let token_entries = token_source.request_tokens(&last_update.next_filters())?;
         let tokens = token_entries.into_iter()
@@ -44,7 +44,7 @@ fn _resync_trade_offers(db: &Db, config: &SLPDEXConfig) -> Result<(), Error> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let current_height = db.header_tip()?.map(|(_, height)| height).unwrap_or(0);
         let last_update =
-            db.last_update(UpdateSubjectType::Exch)?
+            db.last_update(UpdateSubjectType::Exch, None)?
                 .unwrap_or(UpdateHistory::initial(UpdateSubjectType::Exch, None));
         let tx_entries = tx_source.request_txs(&last_update.next_filters(), config)?;
         let history = TxHistory::from_entries(&tx_entries, timestamp as i64, config);
@@ -66,17 +66,17 @@ fn _resync_address(db: &Db, config: &SLPDEXConfig, address: &Address) -> Result<
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let current_height = db.header_tip()?.map(|(_, height)| height).unwrap_or(0);
         let last_update =
-            db.last_update(UpdateSubjectType::AddressHistory)?
+            db.last_update(UpdateSubjectType::AddressHistory, Some(address.bytes().to_vec()))?
                 .unwrap_or(UpdateHistory::initial(
                     UpdateSubjectType::AddressHistory,
                     Some(address.bytes().to_vec()),
                 ));
+        println!("last update: {}", last_update);
         let tx_entries = tx_source.request_txs(&last_update.next_filters(), config)?;
         let history = TxHistory::from_entries(&tx_entries, timestamp as i64, config);
-        if history.txs.len() == 0 {
-            break
+        if history.txs.len() > 0 {
+            db.add_tx_history(&history)?;
         }
-        db.add_tx_history(&history)?;
         db.add_update_history(
             &UpdateHistory::from_tx_history(
                 &history,
@@ -85,6 +85,9 @@ fn _resync_address(db: &Db, config: &SLPDEXConfig, address: &Address) -> Result<
                 current_height,
             )
         )?;
+        if history.txs.len() == 0 {
+            break
+        }
     }
     db.update_utxo_set(&address)?;
     Ok(())
