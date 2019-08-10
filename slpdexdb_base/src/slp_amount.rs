@@ -1,4 +1,4 @@
-use std::ops::{Add, Sub, Mul, Div, AddAssign, SubAssign, MulAssign, DivAssign};
+use std::ops::{Add, Sub, Mul, Div, Neg, AddAssign, SubAssign, MulAssign, DivAssign};
 use std::iter::Sum;
 use std::io::{Cursor, self};
 use std::cmp::Ordering;
@@ -162,6 +162,14 @@ impl Div<SLPAmount> for i128 {
 
     fn div(self, rhs: SLPAmount) -> Self::Output {
         rhs.map(|a| self / a)
+    }
+}
+
+impl Neg for SLPAmount {
+    type Output = SLPAmount;
+
+    fn neg(self) -> Self::Output {
+        SLPAmount { base_amount: self.base_amount, decimals: self.decimals }
     }
 }
 
