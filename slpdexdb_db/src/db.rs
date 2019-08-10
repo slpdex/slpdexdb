@@ -1,16 +1,18 @@
 use diesel::pg::PgConnection;
+use diesel::data_types::PgNumeric;
 use diesel::prelude::*;
 
-use cashcontracts::Address;
+use cashcontracts::{Address, AddressType};
 use slpdexdb_base::BlockHeader;
 use slpdexdb_base::SLPAmount;
-use slpdexdb_base::convert_numeric::rational_to_pg_numeric;
-use crate::tx_history::{TxHistory, TxType};
+use slpdexdb_base::convert_numeric::{rational_to_pg_numeric, pg_numeric_to_rational};
+use crate::tx_history::{TxHistory, TxType, TradeOffer};
 use crate::update_history::{UpdateHistory, UpdateSubjectType};
 use crate::token::Token;
 use crate::{models, schema::*};
 use crate::convert::pg_safe_string;
-use crate::data::{Utxo, TxDelta};
+use crate::data::{Utxo, NewUtxo, SpentUtxo, TxDelta, tx_hash_from_slice, address_hash_from_slice,
+                  TradeOfferFilter};
 
 use std::collections::{HashMap, HashSet, BTreeSet};
 
@@ -93,18 +95,6 @@ impl Db {
         Ok(())
     }
 
-    pub fn is_active_address(&self, addresses: &[Address]) -> QueryResult<Vec<bool>> {
-        let payload = addresses.iter().map(|address| address.bytes().to_vec()).collect::<Vec<_>>();
-        let active_addresses = active_address::table
-            .filter(active_address::address.eq_any(payload))
-            .limit(1)
-            .load::<models::ActiveAddress>(&self.connection)?
-            .into_iter()
-            .map(|address| address.address)
-            .collect::<HashSet<_>>();
-        Ok(addresses.iter().map(|address| active_addresses.contains(address.bytes().as_ref())).collect())
-    }
-
     pub fn add_tx_history(&self, tx_history: &TxHistory) -> QueryResult<()> {
         self.connection.transaction(|| {
             let token_hashes = tx_history.txs.iter()
@@ -162,7 +152,7 @@ impl Db {
                             tx: id,
                             idx: output_idx as i32,
                             value_satoshis: output.value_satoshis as i64,
-                            value_token_base: output.value_token_base.into(),
+                            value_token_base: output.value_token.into(),
                             address: output.output.address()
                                 .map(|addr| addr.bytes().to_vec()),
                             output_type: output.output.id(),
@@ -204,7 +194,7 @@ impl Db {
                                                                 PRICE_DIGITS),
                         is_inverted: trade_offer.is_inverted,
                         script_price: trade_offer.script_price,
-                        sell_amount_token_base: trade_offer.sell_amount_token_base.into(),
+                        sell_amount_token_base: trade_offer.sell_amount_token.into(),
                         receiving_address: trade_offer.receiving_address.bytes().to_vec(),
                     }
                 })
@@ -217,14 +207,21 @@ impl Db {
         })
     }
 
-    pub fn last_update(&self, subject_type: UpdateSubjectType)
+    pub fn last_update(&self, subject_type: UpdateSubjectType, subject_hash: Option<Vec<u8>>)
             -> QueryResult<Option<UpdateHistory>> {
-        let update: Option<models::UpdateHistory> = update_history::table
+        let query = update_history::table
             .filter(update_history::subject_type.eq(subject_type as i32))
             .order(update_history::timestamp.desc())
-            .limit(1)
-            .first::<models::UpdateHistory>(&self.connection)
-            .optional()?;
+            .limit(1);
+        let update: Option<models::UpdateHistory> = match subject_hash {
+            Some(subject_hash) => query
+                .filter(update_history::subject_hash.eq(subject_hash))
+                .first::<models::UpdateHistory>(&self.connection)
+                .optional()?,
+            None => query
+                .first::<models::UpdateHistory>(&self.connection)
+                .optional()?,
+        };
         Ok(update.map(|update| {
             UpdateHistory {
                 last_height: update.last_height,
@@ -287,11 +284,7 @@ impl Db {
             .optional()?;
         Ok(token.map(|token| {
             Token {
-                hash: {
-                    let mut hash = [0; 32];
-                    hash.copy_from_slice(&token.hash);
-                    hash
-                },
+                hash: tx_hash_from_slice(&token.hash),
                 decimals: token.decimals,
                 timestamp: token.timestamp,
                 version_type: token.version_type,
@@ -360,7 +353,6 @@ impl Db {
     }
 
     pub fn utxos_address(&self, address: &Address) -> QueryResult<Vec<Utxo>> {
-        use diesel::data_types::PgNumeric;
         let result = tx_output::table
             .inner_join(utxo_address::table.on(
                 tx_output::tx.eq(utxo_address::tx).and(tx_output::idx.eq(utxo_address::idx))
@@ -382,30 +374,19 @@ impl Db {
                     |decimals| SLPAmount::from_numeric_decimals(&value_token_base, decimals as u32)
                 ).unwrap_or(SLPAmount::new(0, 0));
                 Utxo {
-                    tx_hash: {
-                        let mut hash = [0; 32];
-                        hash.copy_from_slice(&tx_hash);
-                        hash
-                    },
+                    tx_hash: tx_hash_from_slice(&tx_hash),
                     vout,
                     value_satoshis: value_satoshis as u64,
                     value_token: slp_amount,
-                    token_hash: token_hash.and_then(|token_hash| {
-                        if slp_amount.base_amount() > 0 {
-                            let mut hash = [0; 32];
-                            hash.copy_from_slice(&token_hash);
-                            Some(hash)
-                        } else {
-                            None
-                        }
-                    }),
+                    token_hash: token_hash
+                        .filter(|_| slp_amount.base_amount() > 0)
+                        .map(|token_hash| tx_hash_from_slice(&token_hash)),
                 }
             })
             .collect())
     }
 
     pub fn address_tx_deltas(&self, address: &Address) -> QueryResult<Vec<TxDelta>> {
-        use diesel::data_types::PgNumeric;
         use diesel::sql_types::Binary;
         let input_query = diesel::sql_query("\
             SELECT
@@ -460,7 +441,7 @@ impl Db {
             .chain(result_output.keys().cloned())
             .collect::<HashSet<_>>();
         Ok(tx_ids.into_iter()
-            .map(|(tx_id)| {
+            .map(|tx_id| {
                 let delta_input = result_input.remove(&tx_id);
                 let delta_output = result_output.remove(&tx_id);
                 let (decimals, token_hash) = delta_input.as_ref()
@@ -492,23 +473,13 @@ impl Db {
                 let delta_satoshis = output_value_satoshis - input_value_satoshis;
                 let delta_token = output_value_token - input_value_token;
                 TxDelta {
-                    tx_hash: {
-                        let mut hash = [0; 32];
-                        hash.copy_from_slice(&delta_output.as_ref()
+                    tx_hash: tx_hash_from_slice(
+                        &delta_output.as_ref()
                             .map(|delta_output| delta_output.tx_hash.clone())
                             .unwrap_or_else(|| delta_input.as_ref().unwrap().tx_hash.clone())
-                        );
-                        hash
-                    },
-                    token_hash: token_hash.and_then(|token_hash| {
-                        if delta_token.base_amount() != 0 {
-                            let mut hash = [0; 32];
-                            hash.copy_from_slice(&token_hash);
-                            Some(hash)
-                        } else {
-                            None
-                        }
-                    }),
+                    ),
+                    token_hash: token_hash.filter(|_| delta_token.base_amount() != 0)
+                        .map(|token_hash| tx_hash_from_slice(&token_hash)),
                     delta_satoshis: delta_satoshis as i64,
                     delta_token,
                     timestamp: delta_output.as_ref()
@@ -517,5 +488,126 @@ impl Db {
                 }
             })
             .collect())
+    }
+
+    pub fn trade_offer_utxos(&self, filter: TradeOfferFilter) -> QueryResult<Vec<TradeOffer>> {
+        use super::schema::trade_offer as t;
+        type Q = (Vec<u8>, Option<i32>,   Vec<u8>,     i32,          i64,
+                  PgNumeric,                Vec<u8>,              PgNumeric,          bool,
+                  i32);
+        let s = (tx::hash, t::output_idx, t::input_tx, t::input_idx, t::script_price,
+                 t::sell_amount_token_base, t::receiving_address, t::price_per_token, t::is_inverted,
+                 token::decimals);
+        let tables = trade_offer::table
+            .inner_join(tx::table)
+            .inner_join(utxo_trade_offer::table.on(tx::id.eq(utxo_trade_offer::tx)))
+            .inner_join(slp_tx::table.on(tx::id.eq(slp_tx::tx)))
+            .inner_join(token::table.on(slp_tx::token.eq(token::id)))
+            .select(s);
+        let result = match filter {
+            TradeOfferFilter::TokenHash(token_hash) => tables
+                .filter(tx::hash.eq(token_hash.to_vec()))
+                .load::<Q>(&self.connection)?,
+            TradeOfferFilter::ReceivingAddress(address) => tables
+                .filter(trade_offer::receiving_address.eq(address.bytes().to_vec()))
+                .load::<Q>(&self.connection)?,
+        };
+        Ok(result
+            .into_iter()
+            .filter_map(|(tx_hash, output_idx, input_tx, input_idx, script_price,
+                          sell_amount_token_base, receiving_address, price_per_token, is_inverted,
+                          decimals)| {
+                Some(TradeOffer {
+                    tx: tx_hash_from_slice(&tx_hash),
+                    output_idx,
+                    input_tx: tx_hash_from_slice(&input_tx),
+                    input_idx,
+                    price_per_token: pg_numeric_to_rational(&price_per_token).ok()?,
+                    script_price,
+                    is_inverted,
+                    sell_amount_token: SLPAmount
+                        ::from_numeric_decimals(&sell_amount_token_base, decimals as u32),
+                    receiving_address: Address
+                        ::from_bytes(AddressType::P2PKH, address_hash_from_slice(&receiving_address)),
+                })
+            })
+            .collect())
+    }
+
+    pub fn txs(&self, tx_hashes: impl Iterator<Item=[u8; 32]>)
+            -> QueryResult<HashMap<[u8; 32], models::Tx>> {
+        Ok(tx::table
+            .filter(tx::hash.eq_any(
+                tx_hashes.map(|tx_hash| tx_hash.to_vec()).collect::<Vec<_>>()
+            ))
+            .load::<models::Tx>(&self.connection)?
+            .into_iter()
+            .map(|tx| (tx_hash_from_slice(&tx.hash), tx))
+            .collect())
+    }
+
+    pub fn tx_outputs(&self, tx_hashes: impl Iterator<Item=[u8; 32]>)
+               -> QueryResult<HashMap<([u8; 32], i32), models::TxOutput>> {
+        Ok(tx_output::table
+            .inner_join(tx::table)
+            .filter(tx::hash.eq_any(
+                tx_hashes.map(|tx_hash| tx_hash.to_vec()).collect::<Vec<_>>()
+            ))
+            .select((tx::hash, tx_output::tx, tx_output::idx, tx_output::value_satoshis,
+                     tx_output::value_token_base, tx_output::address, tx_output::output_type))
+            .load::<(Vec<u8>, i64, i32, i64, PgNumeric, Option<Vec<u8>>, i32)>(&self.connection)?
+            .into_iter()
+            .map(|(hash, tx, idx, value_satoshis, value_token_base, address, output_type)|
+                ((tx_hash_from_slice(&hash), idx),
+                 models::TxOutput {tx, idx, value_satoshis, value_token_base, address, output_type})
+            )
+            .collect())
+    }
+
+    pub fn remove_utxos(&self, utxos: &[SpentUtxo]) -> QueryResult<()> {
+        let txs = self.txs(utxos.iter().map(|utxo| utxo.tx_hash))?;
+        for utxo in utxos {
+            let tx = &txs[&utxo.tx_hash];
+            diesel::delete(utxo_address::table)
+                .filter(utxo_address::tx.eq(tx.id).and(utxo_address::idx.eq(utxo.vout)))
+                .execute(&self.connection)?;
+            diesel::delete(utxo_trade_offer::table)
+                .filter(utxo_trade_offer::tx.eq(tx.id).and(utxo_trade_offer::idx.eq(utxo.vout)))
+                .execute(&self.connection)?;
+        }
+        Ok(())
+    }
+
+    pub fn add_utxos(&self, utxos: &[NewUtxo]) -> QueryResult<()> {
+        let txs = self.txs(utxos.iter().map(|utxo| match utxo {
+            NewUtxo::Address {tx_hash, ..} => tx_hash.clone(),
+            NewUtxo::TradeOffer {tx_hash, ..} => tx_hash.clone(),
+        }))?;
+        diesel::insert_into(utxo_address::table)
+            .values(utxos.iter()
+                .filter_map(|utxo| match utxo {
+                    NewUtxo::Address {tx_hash, vout, address} => Some(models::UtxoAddress {
+                        tx: txs[tx_hash].id,
+                        idx: *vout,
+                        address: Some(address.bytes().to_vec()),
+                    }),
+                    NewUtxo::TradeOffer {..} => None,
+                })
+                .collect::<Vec<_>>()
+            )
+            .execute(&self.connection)?;
+        diesel::insert_into(utxo_trade_offer::table)
+            .values(utxos.iter()
+                .filter_map(|utxo| match utxo {
+                    NewUtxo::Address {..} => None,
+                    NewUtxo::TradeOffer {tx_hash, vout} => Some(models::Utxo {
+                        tx: txs[tx_hash].id,
+                        idx: *vout,
+                    }),
+                })
+                .collect::<Vec<_>>()
+            )
+            .execute(&self.connection)?;
+        Ok(())
     }
 }
