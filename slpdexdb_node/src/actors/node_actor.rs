@@ -88,7 +88,7 @@ impl actix::io::WriteHandler<io::Error> for NodeActor {
 
 impl StreamHandler<MessagePacket, io::Error> for NodeActor {
     fn handle(&mut self, msg: MessagePacket, ctx: &mut Context<Self>) {
-        println!("msg: {}", msg);
+        //println!("msg: {}", msg);
         match msg.header().command_name() {
             b"version" => Self::_broadcast(msg, &self.subscribers_version),
             b"verack" => Self::_broadcast(msg, &self.subscribers_verack),

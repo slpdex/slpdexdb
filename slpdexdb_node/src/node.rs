@@ -102,14 +102,14 @@ impl<A: NodeAdapter> Node<A> {
                 let mut tx_history = TxHistory::from_txs(&[tx_msg.tx], unix_time as i64, config, db);
                 tx_history.txs.iter().for_each(|tx| {
                     match &tx.tx_type {
-                        crate::tx_history::TxType::SLP {token_hash, ..} => println!("SLP token={}", hex::encode(token_hash)),
+                        crate::tx_history::TxType::SLP {token_hash, ..} => println!("SLP token={}", tx_hash_to_hex(token_hash)),
                         _ => {},
                     };
                 });
                 tx_history.validate_slp(&TxSource::new(), db, config)?;
                 tx_history.txs.iter().for_each(|tx| {
                     match &tx.tx_type {
-                        crate::tx_history::TxType::SLP {token_hash, ..} => println!("valid SLP token={}", hex::encode(token_hash)),
+                        crate::tx_history::TxType::SLP {token_hash, ..} => println!("valid SLP token={}", tx_hash_to_hex(token_hash)),
                         _ => {},
                     };
                 });

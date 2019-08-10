@@ -1,6 +1,7 @@
 use crate::token_source::token_result::TokenEntry;
 use slpdexdb_base::SLPAmount;
 use slpdexdb_base::{Result, ErrorKind, Error, TokenError};
+use cashcontracts::tx_hex_to_hash;
 
 #[derive(Clone, Debug)]
 pub struct Token {
@@ -29,11 +30,11 @@ impl Token {
             ).into()
         };
         Ok(Token {
-            hash: {
-                let mut hash = [0; 32];
-                hash.copy_from_slice(&hex::decode(&token_entry.token_details.token_id_hex)?);
-                hash
-            },
+            hash: tx_hex_to_hash(&token_entry.token_details.token_id_hex).ok_or_else(|| -> Error {
+                ErrorKind::TokenError(
+                    TokenError::InvalidTokenHex(token_entry.token_details.token_id_hex.clone())
+                ).into()
+            })?,
             decimals: token_entry.token_details.decimals,
             timestamp: token_entry.token_details.timestamp_unix.ok_or_else(not_mined_yet_err)?,
             block_created_height: token_entry.token_stats.block_created.ok_or_else(not_mined_yet_err)?,

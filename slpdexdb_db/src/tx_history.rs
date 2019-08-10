@@ -5,7 +5,7 @@ use crate::db::Db;
 use byteorder::{BigEndian, ReadBytesExt};
 use std::io;
 use std::collections::{HashSet, HashMap};
-use cashcontracts::{Output, AddressType, Address, tx_hash_to_hex};
+use cashcontracts::{Output, AddressType, Address, tx_hash_to_hex, tx_hex_to_hash};
 use rug::Rational;
 
 #[derive(Clone, Debug)]
@@ -120,6 +120,13 @@ impl OutputType {
 }
 
 impl TxType {
+    pub fn token_hash(&self) -> Option<&[u8; 32]> {
+        match self {
+            TxType::Default => None,
+            TxType::SLP {token_hash, ..} => Some(token_hash),
+        }
+    }
+
     pub fn id(&self) -> i32 {
         match self {
             TxType::Default => 1,
@@ -147,12 +154,12 @@ impl TxHistory {
                         now: i64,
                         config: &SLPDEXConfig) -> Self {
         let mut historic_txs = Vec::with_capacity(entries.len());
-        let mut trade_offers = Vec::new();
+        let mut trade_offers = HashMap::new();
         for entry in entries.iter() {
             let inputs = entry.inputs.iter()
                 .map(|input| {
                     HistoricTxInput {
-                        output_tx: cashcontracts::tx_hex_to_hash(&input.e.h),
+                        output_tx: cashcontracts::tx_hex_to_hash(&input.e.h).unwrap(),
                         output_idx: input.e.i,
                         output: Self::_process_address(&input.e.a)
                     }
@@ -184,17 +191,13 @@ impl TxHistory {
                 })
                 .collect::<Vec<_>>();
             let historic_tx = HistoricTx {
-                hash: cashcontracts::tx_hex_to_hash(&entry.tx.h),
+                hash: cashcontracts::tx_hex_to_hash(&entry.tx.h).unwrap(),
                 height: entry.blk.as_ref().map(|blk| blk.i),
                 timestamp: entry.blk.as_ref().map(|blk| blk.t as i64).unwrap_or(now),
                 tx_type: entry.slp.as_ref()
                     .and_then(|slp| Some(TxType::SLP {
                         token_type: slp.detail.version_type,
-                        token_hash: {
-                            let mut token_id = [0; 32];
-                            token_id.copy_from_slice(&hex::decode(&slp.detail.token_id).ok()?);
-                            token_id
-                        },
+                        token_hash: tx_hex_to_hash(&slp.detail.token_id)?,
                         slp_type: SLPTxType::from_bytes(slp.detail.transaction_type.as_bytes())?,
                     }))
                     .unwrap_or(TxType::Default),
@@ -202,10 +205,10 @@ impl TxHistory {
                 outputs,
             };
             entry.slp.as_ref().and_then(|slp| {
-                trade_offers.push((
+                trade_offers.insert(
                     historic_txs.len(),
                     TradeOffer::from_entry(&historic_tx, entry, config, slp.detail.decimals as u32)?,
-                ));
+                );
                 Some(())
             });
             historic_txs.push(historic_tx);
@@ -282,7 +285,7 @@ impl TxHistory {
                     ).into())
                 }
                 let mut token_hash = [0; 32];
-                token_hash.copy_from_slice(token_id);
+                token_hash.copy_from_slice(&token_id.iter().rev().cloned().collect::<Vec<_>>());
                 let token = Self::_fetch_token(&token_hash, db)?;
                 let decimals = token.decimals as u32;
                 let token_type = serialize::vec_to_int(token_type);
@@ -326,7 +329,7 @@ impl TxHistory {
 
     pub fn from_txs(txs: &[cashcontracts::Tx], now: i64, config: &SLPDEXConfig, db: &Db) -> Self {
         let mut historic_txs = Vec::new();
-        let mut trade_offers = Vec::new();
+        let mut trade_offers = HashMap::new();
         for tx in txs.iter() {
             let inputs = tx.inputs().iter()
                 .map(|input| {
@@ -388,9 +391,8 @@ impl TxHistory {
                 ),
                 _ => None,
             };
-            match trade_offer {
-                Some(trade_offer) => trade_offers.push((historic_txs.len(), trade_offer)),
-                None => {},
+            if let Some(trade_offer) = trade_offer {
+                trade_offers.insert(historic_txs.len(), trade_offer);
             }
             historic_txs.push(historic_tx);
         }
@@ -409,7 +411,9 @@ impl TxHistory {
                 println!("token entry: {:?}", token_entries);
                 if token_entries.len() == 0 {
                     return Err(
-                        ErrorKind::TokenError(TokenError::UnknownTokenId(hex::encode(token_hash))).into()
+                        ErrorKind::TokenError(
+                            TokenError::UnknownTokenId(tx_hash_to_hex(token_hash))
+                        ).into()
                     )
                 }
                 let token = Token::from_entry(token_entries.remove(0))?;
@@ -439,7 +443,7 @@ impl TxHistory {
         let validity_map = tx_source
             .request_slp_tx_validity(&tx_to_check, config)?
             .into_iter()
-            .map(|validity| (cashcontracts::tx_hex_to_hash(&validity.tx.h), validity))
+            .map(|validity| (cashcontracts::tx_hex_to_hash(&validity.tx.h).unwrap(), validity))
             .collect::<HashMap<_, _>>();
         for validity in validity_map.values() {
             println!("{}", serde_json::to_string(validity).unwrap_or(".".to_string()));
@@ -463,8 +467,7 @@ impl TxHistory {
                 .filter(|(tx_input, validity)|
                     validity.slp.valid &&
                         tx_input.output_idx > 0 &&
-                        hex::decode(&validity.slp.detail.token_id).ok().as_ref()
-                            .map(|t| t.as_slice()) == Some(token_hash) &&
+                        tx_hex_to_hash(&validity.slp.detail.token_id).as_ref() == Some(token_hash) &&
                         validity.slp.detail.version_type == *token_type
                 )
                 .filter_map(|(tx_input, validity)|
@@ -612,9 +615,9 @@ impl TradeOffer {
                         ))
                     });
                 Some(TradeOffer {
-                    tx: cashcontracts::tx_hex_to_hash(&entry.tx.h),
+                    tx: cashcontracts::tx_hex_to_hash(&entry.tx.h).unwrap(),
                     output_idx: contract_vals.map(|(idx, _)| idx),
-                    input_tx: cashcontracts::tx_hex_to_hash(&input.e.h),
+                    input_tx: cashcontracts::tx_hex_to_hash(&input.e.h).unwrap(),
                     input_idx: input.e.i,
                     price_per_token: price.price_per_token,
                     is_inverted: price.is_inverted,
@@ -685,5 +688,51 @@ impl TradeOffer {
                 _ => { println!("bad stack {}", input.script); None }
             }
         })
+    }
+}
+
+impl std::fmt::Display for HistoricTx {
+    fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> std::result::Result<(), std::fmt::Error> {
+        writeln!(f, "hash: {}", tx_hash_to_hex(&self.hash))?;
+        writeln!(f, "height: {:?}", self.height)?;
+        writeln!(f, "timestamp: {}", self.timestamp)?;
+        writeln!(f, "tx_type: {:?}", self.tx_type)?;
+        writeln!(f, "inputs:")?;
+        for (i, input) in self.inputs.iter().enumerate() {
+            writeln!(f, "{}:\n{}", i, input)?;
+        }
+        writeln!(f, "outputs:")?;
+        for (i, output) in self.outputs.iter().enumerate() {
+            writeln!(f, "{}:\n{}", i, output)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for HistoricTxInput {
+    fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> std::result::Result<(), std::fmt::Error> {
+        writeln!(f, "  output_tx: {}", tx_hash_to_hex(&self.output_tx))?;
+        writeln!(f, "  output_idx: {:?}", self.output_idx)?;
+        writeln!(f, "  output: {}", self.output)?;
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for HistoricTxOutput {
+    fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> std::result::Result<(), std::fmt::Error> {
+        writeln!(f, "  value_satoshis: {}", self.value_satoshis)?;
+        writeln!(f, "  value_token: {}", self.value_token)?;
+        writeln!(f, "  output: {}", self.output)?;
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for OutputType {
+    fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> std::result::Result<(), std::fmt::Error> {
+        match self {
+            OutputType::Address(address) => write!(f, "Address({})", address.cash_addr())?,
+            _ => write!(f, "{:?}", self)?,
+        }
+        Ok(())
     }
 }

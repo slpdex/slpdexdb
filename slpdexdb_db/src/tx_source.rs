@@ -1,4 +1,4 @@
-use cashcontracts::Address;
+use cashcontracts::{Address, tx_hash_to_hex};
 use json::{JsonValue, object, array};
 use slpdexdb_base::SLPDEXConfig;
 use crate::endpoint::Endpoint;
@@ -172,7 +172,7 @@ impl TxFilter {
                         ("in.b1", object!{"op" => 0x50 + config.exch_version}),
                     ],
                     TxFilter::TokenId(token_id) => vec![
-                        ("slp.detail.tokenIdHex", JsonValue::String(hex::encode(token_id)))
+                        ("slp.detail.tokenIdHex", JsonValue::String(tx_hash_to_hex(token_id)))
                     ],
                     _ => vec![],
                 }

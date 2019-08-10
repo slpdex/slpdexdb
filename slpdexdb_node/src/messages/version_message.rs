@@ -4,7 +4,6 @@ use cashcontracts::serialize::{read_var_str, write_var_str};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{self, Write, Read};
 use std::net::{IpAddr, SocketAddr};
-use tokio_tcp::TcpStream;
 use slpdexdb_base::Result;
 use std::time::{SystemTime, UNIX_EPOCH};
 

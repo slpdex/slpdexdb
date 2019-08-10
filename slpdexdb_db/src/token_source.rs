@@ -1,5 +1,6 @@
 use crate::endpoint::Endpoint;
 use crate::tx_source::{TxFilter, SortKey};
+use cashcontracts::tx_hash_to_hex;
 use json::{JsonValue, object, object::Object};
 
 pub struct TokenSource {
@@ -80,14 +81,14 @@ impl TokenSource {
             .filter_map(|filter| match filter {
                 TxFilter::MinTxHash(tx_hash) => Some(
                     ("tokenDetails.tokenIdHex",
-                     object!{"$gt" => hex::encode(tx_hash)})
+                     object!{"$gt" => tx_hash_to_hex(tx_hash)})
                 ),
                 TxFilter::MinBlockHeight(height) => Some(
                     ("tokenStats.block_created", object!{"$gte" => *height})
                 ),
                 TxFilter::TokenId(token_hash) => Some(
                     ("tokenDetails.tokenIdHex",
-                     JsonValue::String(hex::encode(token_hash)))
+                     JsonValue::String(tx_hash_to_hex(token_hash)))
                 ),
                 _ => None,
             })
