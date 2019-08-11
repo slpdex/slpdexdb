@@ -3,7 +3,7 @@ use diesel::data_types::PgNumeric;
 use diesel::prelude::*;
 
 use cashcontracts::{Address, AddressType};
-use slpdexdb_base::BlockHeader;
+use slpdexdb_base::{BlockHeader, GENESIS};
 use slpdexdb_base::SLPAmount;
 use slpdexdb_base::convert_numeric::{rational_to_pg_numeric, pg_numeric_to_rational};
 use crate::tx_history::{TxHistory, TxType, TradeOffer};
@@ -33,6 +33,12 @@ impl Db {
             .iter()
             .map(|(header, height)| (header.hash(), *height))
             .collect::<HashMap<_, _>>();
+        if heights.len() == 0 {
+            diesel::insert_into(blocks::table)
+                .values(&models::Block::from_block_header(&GENESIS, 0))
+                .execute(&self.connection)?;
+            heights.insert(GENESIS.hash(), 0);
+        }
         loop {
             let tuple = remaining_visit
                 .iter().cloned()
