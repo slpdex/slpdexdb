@@ -359,11 +359,14 @@ impl TxHistory {
                 .map(|(output_idx, output)| {
                     HistoricTxOutput {
                         value_satoshis: output.value,
-                        value_token: slp_amounts.get(output_idx).cloned()
-                            .unwrap_or(SLPAmount::new(
-                                0,
-                                token.as_ref().map(|token| token.decimals as u32).unwrap_or(0),
-                            )),
+                        value_token: if output_idx > 0 {
+                            slp_amounts.get(output_idx - 1).cloned()
+                        } else {
+                            None
+                        }.unwrap_or(SLPAmount::new(
+                            0,
+                            token.as_ref().map(|token| token.decimals as u32).unwrap_or(0),
+                        )),
                         output: Self::_process_output_script(&output.script),
                     }
                 })
