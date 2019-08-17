@@ -1,4 +1,4 @@
-use crate::tx_source::{tx_result, TxSource, TxFilter};
+use crate::tx_source::{tx_result, TxSource, TxFilter, Confirmedness};
 use slpdexdb_base::{SLPDEXConfig, SLPAmount, Result, Error, ErrorKind, SLPError, TokenError, TradeOfferError};
 use crate::token::Token;
 use crate::db::Db;
@@ -441,7 +441,7 @@ impl TxHistory {
             .collect::<Vec<_>>();
         if tx_to_check.len() == 0 { return Ok(()); }
         let validity_map = tx_source
-            .request_slp_tx_validity(&tx_to_check, config)?
+            .request_slp_tx_validity(&tx_to_check, config, Confirmedness::Both)?
             .into_iter()
             .map(|validity| (cashcontracts::tx_hex_to_hash(&validity.tx.h).unwrap(), validity))
             .collect::<HashMap<_, _>>();
