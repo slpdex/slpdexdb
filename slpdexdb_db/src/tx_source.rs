@@ -26,6 +26,13 @@ pub enum TxResultKind {
     SLPValidity,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Confirmedness {
+    Confirmed,
+    Unconfirmed,
+    Both,
+}
+
 pub struct TxSource {
     endpoint: Endpoint
 }
@@ -137,14 +144,14 @@ pub mod tx_result {
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct TxResult {
-        pub u: Vec<TxEntry>,
-        pub c: Vec<TxEntry>,
+        pub u: Option<Vec<TxEntry>>,
+        pub c: Option<Vec<TxEntry>>,
     }
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct TxSLPValidityResult {
-        pub u: Vec<TxSLPValidity>,
-        pub c: Vec<TxSLPValidity>,
+        pub u: Option<Vec<TxSLPValidity>>,
+        pub c: Option<Vec<TxSLPValidity>>,
     }
 }
 
@@ -280,15 +287,21 @@ impl TxSource {
               endpoint_url: &str,
               conditions: Vec<(&'static str, JsonValue)>,
               sort: JsonValue,
-              result_kind: TxResultKind) -> reqwest::Result<String> {
+              result_kind: TxResultKind,
+              confirmedness: Confirmedness) -> reqwest::Result<String> {
         let mut conditions_json = Vec::new();
         for (key, json) in conditions {
             conditions_json.push(object!{key => json});
         }
+        let db = match confirmedness {
+            Confirmedness::Unconfirmed => array!["u"],
+            Confirmedness::Confirmed   => array!["c"],
+            Confirmedness::Both        => array!["u", "c"],
+        };
         let mut query = object!{
             "v" => 3,
             "q" => object!{
-                "db" => array!["u", "c"],
+                "db" => db,
                 "find" => object!{"$and" => JsonValue::Array(conditions_json)},
                 "sort" => sort,
             },
@@ -307,7 +320,8 @@ impl TxSource {
     fn _request_txs(&self,
                     filters: &[TxFilter],
                     config: &SLPDEXConfig,
-                    result_kind: TxResultKind)
+                    result_kind: TxResultKind,
+                    confirmedness: Confirmedness)
             -> reqwest::Result<Vec<String>> {
         let slp_only =
             filters.iter().any(|f| match f {
@@ -320,46 +334,52 @@ impl TxSource {
         if !slp_only {
             let mut bch_conditions = TxFilter::bch_conditions(filters);
             bch_conditions.append(&mut base_conditions.clone());
-            results.push(self._query(
-                &self.endpoint.bitdb_endpoint_url,
-                bch_conditions,
-                sort.clone(),
-                result_kind,
-            )?);
+            results.push(
+                self._query(
+                    &self.endpoint.bitdb_endpoint_url,
+                    bch_conditions,
+                    sort.clone(),
+                    result_kind,
+                    confirmedness,
+                )?
+            );
         }
         let mut slp_conditions = TxFilter::slp_conditions(filters, config);
         slp_conditions.append(&mut base_conditions.clone());
-        results.push(self._query(
-            &self.endpoint.slpdb_endpoint_url,
-            slp_conditions,
-            sort,
-            result_kind,
-        )?);
+        results.push(
+            self._query(
+                &self.endpoint.slpdb_endpoint_url,
+                slp_conditions,
+                sort,
+                result_kind,
+                confirmedness,
+            )?
+        );
         Ok(results)
     }
 
-    pub fn request_txs(&self, filters: &[TxFilter], config: &SLPDEXConfig)
+    pub fn request_txs(&self, filters: &[TxFilter], config: &SLPDEXConfig, confirmedness: Confirmedness)
             -> reqwest::Result<Vec<tx_result::TxEntry>> {
-        let results_json = self._request_txs(filters, config, TxResultKind::Complete)?;
+        let results_json = self._request_txs(filters, config, TxResultKind::Complete, confirmedness)?;
         let mut results = Vec::new();
         for result_json in results_json {
-            let mut result = serde_json
-                ::from_str::<tx_result::TxResult>(&result_json).unwrap();
-            results.append(&mut result.u);
-            results.append(&mut result.c);
+            let result = serde_json::from_str::<tx_result::TxResult>(&result_json).unwrap();
+            result.c.map(|mut r| results.append(&mut r));
+            result.u.map(|mut r| results.append(&mut r));
         }
         Ok(results)
     }
 
-    pub fn request_slp_tx_validity(&self, filters: &[TxFilter], config: &SLPDEXConfig)
+    pub fn request_slp_tx_validity(&self, filters: &[TxFilter], config: &SLPDEXConfig,
+                                   confirmedness: Confirmedness)
             -> reqwest::Result<Vec<tx_result::TxSLPValidity>> {
-        let results_json = self._request_txs(filters, config, TxResultKind::Complete)?;
+        let results_json = self._request_txs(filters, config, TxResultKind::Complete, confirmedness)?;
         let mut results = Vec::new();
         for result_json in results_json {
-            let mut result = serde_json
-                ::from_str::<tx_result::TxSLPValidityResult>(&result_json).unwrap();
-            results.append(&mut result.u);
-            results.append(&mut result.c);
+            let result = serde_json::from_str::<tx_result::TxSLPValidityResult>(&result_json)
+                .unwrap();
+            result.c.map(|mut r| results.append(&mut r));
+            result.u.map(|mut r| results.append(&mut r));
         }
         Ok(results)
     }

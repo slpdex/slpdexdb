@@ -15,11 +15,17 @@ pub enum UpdateSubjectType {
 }
 
 #[derive(Clone, Debug)]
+pub struct UpdateSubject {
+    pub subject_type: UpdateSubjectType,
+    pub hash: Option<Vec<u8>>,
+    pub is_confirmed: bool,
+}
+
+#[derive(Clone, Debug)]
 pub struct UpdateHistory {
     pub last_height:   i32,
     pub last_tx_hash:  Option<Vec<u8>>,
-    pub subject_type:  UpdateSubjectType,
-    pub subject_hash:  Option<Vec<u8>>,
+    pub subject:       UpdateSubject,
     pub completed:     bool,
 }
 
@@ -41,7 +47,7 @@ impl UpdateHistory {
                 filters.push(TxFilter::MinBlockHeight(self.last_height));
             },
         };
-        match self.subject_type {
+        match self.subject.subject_type {
             Token => {},
             Exch => {
                 filters.push(TxFilter::Exch);
@@ -49,7 +55,7 @@ impl UpdateHistory {
             AddressHistory => {
                 let mut address_hash = [0; 20];
                 address_hash.copy_from_slice(
-                    self.subject_hash.as_ref().expect("Subject hash must be present for AddressHistory")
+                    self.subject.hash.as_ref().expect("Subject hash must be present for AddressHistory")
                 );
                 filters.push(TxFilter::Address(Address::from_bytes(AddressType::P2PKH, address_hash)));
             },
@@ -58,19 +64,17 @@ impl UpdateHistory {
         filters
     }
 
-    pub fn initial(subject_type: UpdateSubjectType, subject_hash: Option<Vec<u8>>) -> Self {
+    pub fn initial(subject: UpdateSubject) -> Self {
         UpdateHistory {
             last_height: 0,
             last_tx_hash: None,
-            subject_type,
-            subject_hash,
+            subject,
             completed: true,
         }
     }
 
     pub fn from_tx_history(tx_history: &TxHistory,
-                           subject_type: UpdateSubjectType,
-                           subject_hash: Option<Vec<u8>>,
+                           subject: UpdateSubject,
                            current_height: i32) -> Self {
         UpdateHistory {
             last_height: tx_history.txs.iter()
@@ -78,18 +82,21 @@ impl UpdateHistory {
                 .max()
                 .unwrap_or(current_height),
             last_tx_hash: tx_history.txs.last().map(|tx| tx.hash.to_vec()),
-            subject_type,
-            subject_hash,
+            subject,
             completed: tx_history.txs.is_empty(),
         }
     }
 
     pub fn from_tokens(tokens: &[Token], current_height: i32) -> Self {
         UpdateHistory {
-            last_height: tokens.iter().map(|token| token.block_created_height).max().unwrap_or(current_height),
+            last_height: tokens.iter().map(|token| token.block_created_height)
+                .max().unwrap_or(current_height),
             last_tx_hash: tokens.last().map(|token| token.hash.to_vec()),
-            subject_type: UpdateSubjectType::Token,
-            subject_hash: None,
+            subject: UpdateSubject {
+                subject_type: UpdateSubjectType::Token,
+                hash: None,
+                is_confirmed: true,
+            },
             completed: tokens.is_empty(),
         }
     }
@@ -99,9 +106,10 @@ impl std::fmt::Display for UpdateHistory {
     fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> Result<(), std::fmt::Error> {
         writeln!(f, "last_height: {}", self.last_height)?;
         writeln!(f, "last_tx_hash: {:?}", self.last_tx_hash.as_ref().map(|tx_hash| tx_hash_from_slice(tx_hash)).as_ref().map(tx_hash_to_hex))?;
-        writeln!(f, "subject_type: {:?}", self.subject_type)?;
-        writeln!(f, "subject_hash: {:?}", self.subject_hash.as_ref().map(hex::encode))?;
+        writeln!(f, "subject_type: {:?}", self.subject.subject_type)?;
+        writeln!(f, "subject_hash: {:?}", self.subject.hash.as_ref().map(hex::encode))?;
         writeln!(f, "completed: {}", self.completed)?;
+        writeln!(f, "is_confirmed: {}", self.subject.is_confirmed)?;
         Ok(())
     }
 }
