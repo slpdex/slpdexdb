@@ -7,7 +7,7 @@ use slpdexdb_base::{BlockHeader, GENESIS};
 use slpdexdb_base::SLPAmount;
 use slpdexdb_base::convert_numeric::{rational_to_pg_numeric, pg_numeric_to_rational};
 use crate::tx_history::{TxHistory, TxType, TradeOffer};
-use crate::update_history::{UpdateHistory, UpdateSubjectType};
+use crate::update_history::{UpdateHistory, UpdateSubject};
 use crate::token::Token;
 use crate::{models, schema::*};
 use crate::convert::pg_safe_string;
@@ -213,13 +213,13 @@ impl Db {
         })
     }
 
-    pub fn last_update(&self, subject_type: UpdateSubjectType, subject_hash: Option<Vec<u8>>)
-            -> QueryResult<Option<UpdateHistory>> {
+    pub fn last_update(&self, subject: UpdateSubject) -> QueryResult<Option<UpdateHistory>> {
         let query = update_history::table
-            .filter(update_history::subject_type.eq(subject_type as i32))
+            .filter(update_history::subject_type.eq(subject.subject_type as i32))
+            .filter(update_history::is_confirmed.eq(subject.is_confirmed))
             .order(update_history::timestamp.desc())
             .limit(1);
-        let update: Option<models::UpdateHistory> = match subject_hash {
+        let update: Option<models::UpdateHistory> = match subject.hash.clone() {
             Some(subject_hash) => query
                 .filter(update_history::subject_hash.eq(subject_hash))
                 .first::<models::UpdateHistory>(&self.connection)
@@ -232,9 +232,8 @@ impl Db {
             UpdateHistory {
                 last_height: update.last_height,
                 last_tx_hash: update.last_tx_hash,
-                subject_type,
-                subject_hash: update.subject_hash,
                 completed: update.completed,
+                subject,
             }
         }))
     }
@@ -249,9 +248,10 @@ impl Db {
                     hash.reverse();
                     hash
                 }),
-                subject_type: update_history.subject_type as i32,
-                subject_hash: update_history.subject_hash.clone(),
+                subject_type: update_history.subject.subject_type as i32,
+                subject_hash: update_history.subject.hash.clone(),
                 completed: update_history.completed,
+                is_confirmed: update_history.subject.is_confirmed,
             })
             .execute(&self.connection)?;
         Ok(())
