@@ -1,5 +1,4 @@
 mod actors;
-mod query;
 mod msg;
 
 use std::str::FromStr;
