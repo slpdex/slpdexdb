@@ -1,12 +1,10 @@
-use std::time::{SystemTime, UNIX_EPOCH};
 use actix::prelude::*;
 use std::collections::{HashSet, HashMap};
 use std::convert::identity;
 use slpdexdb_base::{Error, SLPDEXConfig};
-use slpdexdb_db::{Db, TxSource, TxHistory, OutputType, Utxo, TxDelta, TradeOffer};
+use slpdexdb_db::{Db, Utxo, TxDelta, TradeOffer};
 use slpdexdb_node::actors::IncomingMsg;
 use slpdexdb_node::messages::TxMessage;
-use futures::future;
 use crate::msg::{ActivateAddress, DeactivateAddress, ResyncAddress, FetchAddressUtxos,
                  FetchAddressTxDeltas, FetchTradeOfferUtxos, SubscribeToEvent, UnsubscribeFromEvent,
                  TxEvent, NewTransactions, ProcessTransactions};
