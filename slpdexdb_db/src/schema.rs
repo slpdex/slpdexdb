@@ -110,6 +110,7 @@ table! {
         subject_hash -> Nullable<Bytea>,
         timestamp -> Timestamptz,
         completed -> Bool,
+        is_confirmed -> Bool,
     }
 }
 

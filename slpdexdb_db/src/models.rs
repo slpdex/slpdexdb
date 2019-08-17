@@ -140,6 +140,7 @@ pub struct UpdateHistory {
     pub subject_hash:    Option<Vec<u8>>, // INT NOT NULL,
     pub timestamp:       chrono::DateTime<chrono::Utc>, // TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     pub completed:       bool, // BOOL NOT NULL
+    pub is_confirmed:    bool, // BOOL NOT NULL
 }
 
 #[derive(Insertable)]
@@ -151,6 +152,7 @@ pub struct NewUpdateHistory {
     pub subject_type:    i32, // INT NOT NULL,
     pub subject_hash:    Option<Vec<u8>>, // BYTEA NOT NULL,
     pub completed:       bool, // BOOL NOT NULL
+    pub is_confirmed:    bool, // BOOL NOT NULL
 }
 
 #[derive(Queryable)]
